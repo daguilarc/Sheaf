@@ -703,6 +703,57 @@ void TestBrowserControllerDiscoveryCacheUsesSignalsAndSuccessfulCommits()
     bridge.Stop();
 }
 
+// sru-70, through the real host wiring instead of MidiConfigViewModel's own
+// SetGestureCount: BrowserRuntimeMainServices::MakeControllersCallbacks
+// (BrowserRuntimeMainServices.hpp) reads callbacks.gestureCount from
+// engine_.Manager().GestureCount(), and ControllersPageSurface's
+// constructor (ControllersPageUI.hpp) only calls the view model's
+// SetGestureCount when that optional carries a value. Nothing else in this
+// suite builds a page through that production path, so a break in either
+// link -- the host forgetting to read the manager's count, or the surface
+// forgetting to forward it -- passed every other test unnoticed (C-6).
+void TestBrowserGestureFieldPastTheHostsGestureCountIsRefusedThroughRealWiring()
+{
+    synth::Engine<ValidApp> engine([] { return std::uint64_t{0}; });
+    // Before Initialize(): SetGestureCount refuses once any group exists
+    // (ValidApp::Init() creates one), matching braid4_system_tests.cpp's
+    // own MeasureBraid4Work.
+    Require(engine.Manager().SetGestureCount(8), "set the real count MakeControllersCallbacks reads");
+    engine.Initialize();
+    synth_browser::BrowserMidiBridge<synth::Engine<ValidApp>> bridge(engine);
+    bridge.Start();
+    std::vector<synth_browser::BrowserAudioDevice> audioDevices;
+    synth_browser::BrowserRuntimeMainServices<ValidApp> services(engine, bridge, audioDevices);
+    auto callbacks = services.MakeControllersCallbacks([] {});
+    Require(callbacks.gestureCount.has_value() && *callbacks.gestureCount == 8,
+            "the real host callback carries the manager's own gesture count");
+
+    synth::MidiControllerSlot wrldbldr;
+    wrldbldr.name = "wrld";
+    wrldbldr.kind = synth::MidiProfileKind::WrldBldr;
+    wrldbldr.config = synth::WrldBldrDefaultProfileConfig();
+    wrldbldr.input = {.identifier = "wrldbldr-in-id", .name = "WRLD.Bldr In"};
+    wrldbldr.output = {.identifier = "wrldbldr-out-id", .name = "WRLD.Bldr Out"};
+    wrldbldr.config.analogInput->gestures.resize(1);
+    wrldbldr.config.analogInput->gestures[0].gestureIx = 0;
+    synth::MidiInstrumentConfig instrument;
+    instrument.controllers.push_back(wrldbldr);
+    Require(callbacks.commitInstrument(instrument), "seed the one WRLD.Bldr controller");
+
+    synth::runtime_ui::ControllersPageSurface surface(std::move(callbacks));
+    surface.MarkDirty();
+    surface.RefreshOnTick();
+
+    const std::string editAction = "0:analogs:0:" +
+        synth::runtime_ui::ControllersLayout::FieldToken(synth::MidiMappingRowVM::Field::GestureIx) + ":8";
+    surface.DispatchAction(
+        synth::ui::Action::WithValue(synth::runtime_ui::Actions::kMappingFieldCommit, editAction));
+
+    Require(surface.StatusText() == "Refused: gesture must be an integer 0-7",
+            "a gesture past the real host's own gesture count is refused, not a Warning");
+    bridge.Stop();
+}
+
 void TestBrowserPrepareFeedsNegotiatedAudioPageAndRejectsOversizedBlocks()
 {
     RuntimeFixture fixture;
@@ -2363,6 +2414,7 @@ int main()
     TestControllersUseLatestBridgeSnapshotCommitEditsSaveImmediatelyBackAddsNoSave();
     TestControllersPageSavesEachCommittedEdit();
     TestBrowserControllerDiscoveryCacheUsesSignalsAndSuccessfulCommits();
+    TestBrowserGestureFieldPastTheHostsGestureCountIsRefusedThroughRealWiring();
     TestFilePageDispatchesPatchLifecycleThroughBrowserRuntime();
     TestPersistenceDirtyConsumesPatchAndConfigSourcesTogether();
     TestAudioWorkletDeadlineMeterAveragesQuantizedTimerSamples();

@@ -2520,6 +2520,26 @@ std::size_t CountGestureReferencesAtOrAbove(const MidiControllerSlot& slot, std:
     return total;
 }
 
+}  // namespace
+
+bool MidiConfigViewModel::GestureCountWouldExceedCap(std::size_t controllerIx, const MidiControllerSlot& slot,
+                                                      std::string* reason) const {
+    if (!gestureCount_.has_value()) {
+        return false;
+    }
+    const std::size_t before = CountGestureReferencesAtOrAbove(instrument_.controllers[controllerIx], *gestureCount_);
+    const std::size_t after = CountGestureReferencesAtOrAbove(slot, *gestureCount_);
+    if (after <= before) {
+        return false;
+    }
+    if (reason != nullptr) {
+        *reason = "gesture must be an integer 0-" + std::to_string(*gestureCount_ - 1);
+    }
+    return true;
+}
+
+namespace {
+
 bool FlushSectionPresentationToSlot(const SectionPresentation& presentation, MidiControllerSlot& slot,
                                     MidiConfigSection section, std::string* reason) {
     switch (section) {
@@ -2719,6 +2739,10 @@ bool MidiConfigViewModel::ApplyMappingEdit(std::size_t controllerIx, MidiConfigS
         return false;
     }
     PresentationRow& presentationRow = presentation.rows[rowIx];
+    // Taken before any field write below, so a refused edit (Flush failure
+    // or the gesture-count check) can restore this one row without touching
+    // the rest of the section's presentation.
+    const PresentationRow rowRollback = presentationRow;
     // Same per-row code BuildSectionRows uses for this row, so the two can
     // never drift, without building every other row in the section.
     const MidiMappingRowVM row = BuildRowFromPresentationRow(
@@ -3099,18 +3123,19 @@ bool MidiConfigViewModel::ApplyMappingEdit(std::size_t controllerIx, MidiConfigS
     }
 
     if (!FlushSectionPresentationToSlot(presentation, slot, section, reason)) {
+        // A Flush failure is one of the two documented Warning cases (a
+        // block's last value below its start, or a grid position the
+        // controller does not have): the typed value stays in the field and
+        // presentationChanged stays true, so the caller prints "Warning: ".
         return false;
     }
 
-    if (gestureCount_.has_value()) {
-        const std::size_t before = CountGestureReferencesAtOrAbove(instrument_.controllers[controllerIx], *gestureCount_);
-        const std::size_t after = CountGestureReferencesAtOrAbove(slot, *gestureCount_);
-        if (after > before) {
-            if (reason != nullptr) {
-                *reason = "gesture must be an integer 0-" + std::to_string(*gestureCount_ - 1);
-            }
-            return false;
+    if (GestureCountWouldExceedCap(controllerIx, slot, reason)) {
+        presentationRow = rowRollback;
+        if (presentationChanged != nullptr) {
+            *presentationChanged = false;
         }
+        return false;
     }
 
     out = std::move(scratch);
@@ -3925,16 +3950,9 @@ bool MidiConfigViewModel::AddSingle(std::size_t controllerIx, MidiConfigSection 
         return false;
     }
 
-    if (gestureCount_.has_value()) {
-        const std::size_t before = CountGestureReferencesAtOrAbove(instrument_.controllers[controllerIx], *gestureCount_);
-        const std::size_t after = CountGestureReferencesAtOrAbove(slot, *gestureCount_);
-        if (after > before) {
-            if (reason != nullptr) {
-                *reason = "gesture must be an integer 0-" + std::to_string(*gestureCount_ - 1);
-            }
-            presentation = rollback;
-            return false;
-        }
+    if (GestureCountWouldExceedCap(controllerIx, slot, reason)) {
+        presentation = rollback;
+        return false;
     }
 
     out = std::move(scratch);
@@ -4142,16 +4160,9 @@ bool MidiConfigViewModel::AddBlock(std::size_t controllerIx, MidiConfigSection s
         return false;
     }
 
-    if (gestureCount_.has_value()) {
-        const std::size_t before = CountGestureReferencesAtOrAbove(instrument_.controllers[controllerIx], *gestureCount_);
-        const std::size_t after = CountGestureReferencesAtOrAbove(slot, *gestureCount_);
-        if (after > before) {
-            if (reason != nullptr) {
-                *reason = "gesture must be an integer 0-" + std::to_string(*gestureCount_ - 1);
-            }
-            presentation = rollback;
-            return false;
-        }
+    if (GestureCountWouldExceedCap(controllerIx, slot, reason)) {
+        presentation = rollback;
+        return false;
     }
 
     out = std::move(scratch);

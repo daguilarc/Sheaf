@@ -849,6 +849,15 @@ private:
     detail::SectionPresentation& PresentationFor(std::size_t controllerIx, MidiConfigSection section) const;
     void DiscardPresentation(const std::string& name, MidiConfigSection section);
 
+    // The gesture-count cap check ApplyMappingEdit, AddSingle and AddBlock
+    // each run on their own candidate `slot`, once it is built and before it
+    // is committed: refuses an edit that would push the count of gesture
+    // references at or above the app's own gestureCount_ higher than it was
+    // before. Only sets `reason`; each caller still rolls its own candidate
+    // state back on refusal, since the three roll back different things.
+    bool GestureCountWouldExceedCap(std::size_t controllerIx, const MidiControllerSlot& slot,
+                                    std::string* reason) const;
+
     MidiInstrumentConfig instrument_;
     MidiConnectionState connection_;
     std::vector<MidiControllerRowVM> controllers_;

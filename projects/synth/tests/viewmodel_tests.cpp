@@ -427,6 +427,44 @@ TEST_CASE(GestureFieldPastTheAppsGesturesIsRefused) {
     REQUIRE_TRUE(instrument.controllers[0].config.analogInput->gestures[0].gestureIx == 0);
 }
 
+// sru-70, the same scenario read through the caller's own status line and
+// displayed field: a refused gesture edit must not leave the view model's
+// row presentation changed, so HandleMappingEdit prints "Refused: ..." (not
+// "Warning: ...") and the field the player sees still shows the stored
+// value, not the refused 8.
+TEST_CASE(GestureFieldPastTheAppsGesturesLeavesThePresentationAndStatusUnchanged) {
+    MidiConfigViewModel vm;
+    MidiInstrumentConfig instrument;
+    MidiControllerSlot slot = MakeWrldBldrSlot("wrld");
+    slot.config.analogInput->gestures.resize(1);
+    slot.config.analogInput->gestures[0].gestureIx = 0;
+    REQUIRE_TRUE(instrument.AddController(std::move(slot)));
+    MidiConnectionState connection;
+    connection.controllers.push_back(MidiControllerConnection{});
+    vm.Rebuild(instrument, connection);
+    vm.SetGestureCount(8);
+
+    MidiInstrumentConfig out;
+    std::string reason;
+    bool presentationChanged = true;
+    REQUIRE_TRUE(!vm.ApplyMappingEdit(0, MidiConfigSection::Analogs, 0, MidiMappingRowVM::Field::GestureIx, 8.0, out,
+                                      &reason, &presentationChanged));
+    REQUIRE_TRUE(reason == "gesture must be an integer 0-7");
+    // The caller reads this to choose "Refused: " over "Warning: " (see
+    // ControllersPageUI::HandleMappingEdit).
+    REQUIRE_TRUE(!presentationChanged);
+
+    // The field the player sees still reads the stored 0, not the refused 8.
+    double value = -1.0;
+    REQUIRE_TRUE(vm.RowFieldValue(0, MidiConfigSection::Analogs, 0, MidiMappingRowVM::Field::GestureIx, value));
+    REQUIRE_TRUE(value == 0.0);
+
+    // A later edit in the section is judged against the stored 0, not a
+    // pending 8 left in the row's presentation cache.
+    REQUIRE_TRUE(vm.ApplyMappingEdit(0, MidiConfigSection::Analogs, 0, MidiMappingRowVM::Field::GestureIx, 1.0, out,
+                                     &reason));
+}
+
 // sru-70 scenario "A block or an add that reaches past the app's gestures is
 // refused": three routes that can grow the count of gesture references past
 // a set count -- a Gesture block landing on 8, "+" with 0-7 already taken,
