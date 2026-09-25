@@ -1508,6 +1508,75 @@ void AppendBlockPresentationRow(SectionPresentation& presentation, RowGroup grou
     presentation.rows.insert(presentation.rows.begin() + static_cast<std::ptrdiff_t>(insertAt), std::move(row));
 }
 
+// The row shape and editable fields for exactly one presentation row.
+// BuildSectionRows calls this once per row; RowFieldValue and
+// ApplyMappingEdit call it for the one row they touch instead of building
+// the whole section, so a row's shape has one definition no caller can
+// drift from.
+MidiMappingRowVM BuildRowFromPresentationRow(const PresentationRow& presentationRow, MidiProfileKind kind,
+                                              bool messageCatalogOffersShift) {
+    MidiMappingRowVM row;
+    row.kind = presentationRow.kind;
+    row.group = presentationRow.group;
+    row.deletable = presentationRow.kind != RowKind::ConfigLevel;
+
+    if (presentationRow.kind == RowKind::ConfigLevel) {
+        if (presentationRow.group == RowGroup::EncoderMode) {
+            const auto* data = std::get_if<EncoderModeRow>(&presentationRow.data);
+            row.editableFields = {Field::EncoderMode};
+            row.label = EncoderModeLabel(data != nullptr ? data->mode : EncoderMode::Signed7Bit);
+        } else if (presentationRow.group == RowGroup::EncoderStep) {
+            const auto* data = std::get_if<EncoderStepRow>(&presentationRow.data);
+            row.editableFields = {Field::TurnStep};
+            row.label = TurnStepLabel(data != nullptr ? data->turnStep : 1.0f);
+        } else if (presentationRow.group == RowGroup::AnalogSceneBlend) {
+            const auto* data = std::get_if<AnalogSceneBlendRow>(&presentationRow.data);
+            row.editableFields = {Field::SceneBlend};
+            row.label = SceneBlendLabel(data != nullptr ? data->sceneBlend : std::optional<MidiControlAddress>{});
+        }
+    } else if (presentationRow.kind == RowKind::Block) {
+        if (const auto* encoderBlock = std::get_if<EncoderBlock>(&presentationRow.block)) {
+            row.editableFields = EncoderBlockEditableFields(*encoderBlock);
+            if (encoderBlock->isPush) {
+                row.editableFields.insert(row.editableFields.begin(), Field::AddressType);
+            }
+            row.label = EncoderBlockLabel(*encoderBlock);
+        } else if (const auto* analogBlock = std::get_if<AnalogBlock>(&presentationRow.block)) {
+            row.editableFields = AnalogBlockEditableFields();
+            row.label = AnalogBlockLabel(*analogBlock);
+        } else if (const auto* systemBlock = std::get_if<SystemBlock>(&presentationRow.block)) {
+            row.editableFields = SystemBlockEditableFields(*systemBlock);
+            row.label = SystemBlockLabel(*systemBlock);
+        } else if (const auto* gridBlock = std::get_if<GridBlock>(&presentationRow.block)) {
+            row.editableFields = GridBlockEditableFields(*gridBlock);
+            row.label = GridBlockLabel(*gridBlock);
+        }
+    } else {
+        if (const auto* mapping = std::get_if<EncoderMidiMapping>(&presentationRow.data)) {
+            if (presentationRow.group == RowGroup::EncoderPush) {
+                row.editableFields = EncoderPushEditableFields(mapping->control.type);
+            } else {
+                row.editableFields = EncoderTurnEditableFields(messageCatalogOffersShift);
+            }
+            row.label = presentationRow.group == RowGroup::EncoderPush ? EncoderPushLabel(*mapping)
+                                                                        : EncoderTurnLabel(*mapping);
+        } else if (const auto* mapping = std::get_if<AnalogMidiMapping>(&presentationRow.data)) {
+            row.editableFields = {Field::Channel, Field::Cc, Field::GestureIx};
+            row.label = GestureLabel(*mapping);
+        } else if (const auto* mapping = std::get_if<AnalogAppActionMapping>(&presentationRow.data)) {
+            row.editableFields = {Field::Channel, Field::Cc, Field::AppAction};
+            row.label = AppActionLabel(*mapping);
+        } else if (const auto* association = std::get_if<MidiControllerSystemMessageAssociation>(&presentationRow.data)) {
+            row.editableFields = SystemRowEditableFields(kind, *association, messageCatalogOffersShift);
+            row.label = SystemMessageLabel(*association, kind);
+        } else if (const auto* gridButton = std::get_if<GridButton>(&presentationRow.data)) {
+            row.editableFields = GridButtonEditableFields(*gridButton);
+            row.label = GridButtonLabel(*gridButton);
+        }
+    }
+    return row;
+}
+
 }  // namespace
 
 std::vector<MidiMappingRowVM> MidiConfigViewModel::BuildSectionRows(std::size_t controllerIx,
@@ -1518,67 +1587,7 @@ std::vector<MidiMappingRowVM> MidiConfigViewModel::BuildSectionRows(std::size_t 
     std::vector<MidiMappingRowVM> rows;
     rows.reserve(presentation.rows.size());
     for (const PresentationRow& presentationRow : presentation.rows) {
-        MidiMappingRowVM row;
-        row.kind = presentationRow.kind;
-        row.group = presentationRow.group;
-        row.deletable = presentationRow.kind != RowKind::ConfigLevel;
-
-        if (presentationRow.kind == RowKind::ConfigLevel) {
-            if (presentationRow.group == RowGroup::EncoderMode) {
-                const auto* data = std::get_if<EncoderModeRow>(&presentationRow.data);
-                row.editableFields = {Field::EncoderMode};
-                row.label = EncoderModeLabel(data != nullptr ? data->mode : EncoderMode::Signed7Bit);
-            } else if (presentationRow.group == RowGroup::EncoderStep) {
-                const auto* data = std::get_if<EncoderStepRow>(&presentationRow.data);
-                row.editableFields = {Field::TurnStep};
-                row.label = TurnStepLabel(data != nullptr ? data->turnStep : 1.0f);
-            } else if (presentationRow.group == RowGroup::AnalogSceneBlend) {
-                const auto* data = std::get_if<AnalogSceneBlendRow>(&presentationRow.data);
-                row.editableFields = {Field::SceneBlend};
-                row.label = SceneBlendLabel(data != nullptr ? data->sceneBlend : std::optional<MidiControlAddress>{});
-            }
-        } else if (presentationRow.kind == RowKind::Block) {
-            if (const auto* encoderBlock = std::get_if<EncoderBlock>(&presentationRow.block)) {
-                row.editableFields = EncoderBlockEditableFields(*encoderBlock);
-                if (encoderBlock->isPush) {
-                    row.editableFields.insert(row.editableFields.begin(), Field::AddressType);
-                }
-                row.label = EncoderBlockLabel(*encoderBlock);
-            } else if (const auto* analogBlock = std::get_if<AnalogBlock>(&presentationRow.block)) {
-                row.editableFields = AnalogBlockEditableFields();
-                row.label = AnalogBlockLabel(*analogBlock);
-            } else if (const auto* systemBlock = std::get_if<SystemBlock>(&presentationRow.block)) {
-                row.editableFields = SystemBlockEditableFields(*systemBlock);
-                row.label = SystemBlockLabel(*systemBlock);
-            } else if (const auto* gridBlock = std::get_if<GridBlock>(&presentationRow.block)) {
-                row.editableFields = GridBlockEditableFields(*gridBlock);
-                row.label = GridBlockLabel(*gridBlock);
-            }
-        } else {
-            if (const auto* mapping = std::get_if<EncoderMidiMapping>(&presentationRow.data)) {
-                if (presentationRow.group == RowGroup::EncoderPush) {
-                    row.editableFields = EncoderPushEditableFields(mapping->control.type);
-                } else {
-                    row.editableFields = EncoderTurnEditableFields(messageCatalogOffersShift_);
-                }
-                row.label = presentationRow.group == RowGroup::EncoderPush ? EncoderPushLabel(*mapping)
-                                                                            : EncoderTurnLabel(*mapping);
-            } else if (const auto* mapping = std::get_if<AnalogMidiMapping>(&presentationRow.data)) {
-                row.editableFields = {Field::Channel, Field::Cc, Field::GestureIx};
-                row.label = GestureLabel(*mapping);
-            } else if (const auto* mapping = std::get_if<AnalogAppActionMapping>(&presentationRow.data)) {
-                row.editableFields = {Field::Channel, Field::Cc, Field::AppAction};
-                row.label = AppActionLabel(*mapping);
-            } else if (const auto* association = std::get_if<MidiControllerSystemMessageAssociation>(&presentationRow.data)) {
-                row.editableFields =
-                    SystemRowEditableFields(slot.kind, *association, messageCatalogOffersShift_);
-                row.label = SystemMessageLabel(*association, slot.kind);
-            } else if (const auto* gridButton = std::get_if<GridButton>(&presentationRow.data)) {
-                row.editableFields = GridButtonEditableFields(*gridButton);
-                row.label = GridButtonLabel(*gridButton);
-            }
-        }
-        rows.push_back(std::move(row));
+        rows.push_back(BuildRowFromPresentationRow(presentationRow, slot.kind, messageCatalogOffersShift_));
     }
     return rows;
 }
@@ -1727,24 +1736,24 @@ bool MidiConfigViewModel::RowFieldValue(std::size_t controllerIx, MidiConfigSect
     if (controllerIx >= instrument_.controllers.size()) {
         return false;
     }
-    // Same gate ApplyMappingEdit applies before touching anything: refuse a
-    // field this row doesn't advertise. SectionRows() is the single source
-    // of truth for row shape/editable fields, reused here so the two can
-    // never drift.
-    const std::vector<MidiMappingRowVM> rows = SectionRows(controllerIx, section);
-    if (rowIx >= rows.size()) {
+    const SectionPresentation& presentation = PresentationFor(controllerIx, section);
+    if (rowIx >= presentation.rows.size()) {
         return false;
     }
-    const std::vector<MidiMappingRowVM::Field>& editable = rows[rowIx].editableFields;
+    const PresentationRow& presentationRow = presentation.rows[rowIx];
+    // Same gate ApplyMappingEdit applies before touching anything: refuse a
+    // field this row doesn't advertise. Built by the same per-row code
+    // BuildSectionRows uses for this row, so the two can never drift,
+    // without building every other row in the section.
+    const MidiMappingRowVM row = BuildRowFromPresentationRow(
+        presentationRow, instrument_.controllers[controllerIx].kind, messageCatalogOffersShift_);
+    const std::vector<MidiMappingRowVM::Field>& editable = row.editableFields;
     if (std::find(editable.begin(), editable.end(), field) == editable.end()) {
         return false;
     }
     if (field == Field::MessageKind || field == Field::BlockMessageType || field == Field::ShiftAction) {
         return false;
     }
-
-    const SectionPresentation& presentation = PresentationFor(controllerIx, section);
-    const PresentationRow& presentationRow = presentation.rows[rowIx];
 
     if (presentationRow.kind == RowKind::Block) {
         return BlockFieldValue(presentationRow.block, field, out);
@@ -2702,23 +2711,25 @@ bool MidiConfigViewModel::ApplyMappingEdit(std::size_t controllerIx, MidiConfigS
         return false;
     }
 
-    const std::vector<MidiMappingRowVM> rows = SectionRows(controllerIx, section);
-    if (rowIx >= rows.size()) {
+    SectionPresentation& presentation = PresentationFor(controllerIx, section);
+    if (rowIx >= presentation.rows.size()) {
         if (reason != nullptr) {
             *reason = "row index out of range";
         }
         return false;
     }
-    const std::vector<MidiMappingRowVM::Field>& editable = rows[rowIx].editableFields;
+    PresentationRow& presentationRow = presentation.rows[rowIx];
+    // Same per-row code BuildSectionRows uses for this row, so the two can
+    // never drift, without building every other row in the section.
+    const MidiMappingRowVM row = BuildRowFromPresentationRow(
+        presentationRow, instrument_.controllers[controllerIx].kind, messageCatalogOffersShift_);
+    const std::vector<MidiMappingRowVM::Field>& editable = row.editableFields;
     if (std::find(editable.begin(), editable.end(), field) == editable.end()) {
         if (reason != nullptr) {
             *reason = "field not editable for this row";
         }
         return false;
     }
-
-    SectionPresentation& presentation = PresentationFor(controllerIx, section);
-    PresentationRow& presentationRow = presentation.rows[rowIx];
 
     MidiInstrumentConfig scratch = instrument_;
     MidiControllerSlot& slot = scratch.controllers[controllerIx];
