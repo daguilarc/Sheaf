@@ -324,9 +324,13 @@ public:
     //      draining new messages this block too). Otherwise (no stash),
     //      drain patchInputBus_ via ApplyPatchMessage using the engine
     //      serialization context; Applied/Reverted patch messages change
-    //      synthesizer parameter values only. ArenaExhausted stashes the popped
-    //      message in pendingPatchMessage_, sets arenaGrowPending_, and stops
-    //      draining for this block (never grows the arena on the audio path).
+    //      synthesizer parameter values, and, when the app's catalog sets
+    //      patchCarriesMappings, a load's midiInstrument section is staged in
+    //      pendingPatchInstrument_ for MessageThreadTick to apply through
+    //      EditInstrument (see StashLoadedPatchInstrument). ArenaExhausted
+    //      stashes the popped message in pendingPatchMessage_, sets
+    //      arenaGrowPending_, and stops draining for this block (never grows
+    //      the arena on the audio path).
     //   2. drain due UI messages, then due MIDI messages. Apply ordinary
     //      parameter/grid messages immediately; insert clock/transport into
     //      one fixed-capacity ordered batch. Its key is timestamp, Internal
@@ -1165,7 +1169,10 @@ private:
 
     // Audio-thread drain loop shared by ProcessBlock's no-stash path and its
     // post-retry continuation. Drains patchInputBus_ via ApplyPatchMessage;
-    // Applied/Reverted patch messages update parameter values only.
+    // Applied/Reverted patch messages update parameter values, and, when the
+    // app's catalog sets patchCarriesMappings, a load's midiInstrument
+    // section is staged in pendingPatchInstrument_ for MessageThreadTick to
+    // apply through EditInstrument (see StashLoadedPatchInstrument).
     // ArenaExhausted stashes the popped message in pendingPatchMessage_, sets
     // arenaGrowPending_, and stops draining for this block (never grows the
     // arena on the audio path — see the ArenaExhausted handling note above
@@ -1245,8 +1252,12 @@ private:
 
     // Pre-audio-only synchronous drain, used by Initialize(). Drains
     // patchInputBus_ via ApplyPatchMessage using the engine's serialization
-    // context. Patch messages are parameter-only, so applying/reverting here
-    // does not schedule MIDI rebuilds or audio-device callbacks.
+    // context. Applying/reverting here changes parameter values, and, when
+    // the app's catalog sets patchCarriesMappings, a load's midiInstrument
+    // section is staged in pendingPatchInstrument_ the same way as
+    // ProcessBlock's drain (see StashLoadedPatchInstrument); this call does
+    // not itself invoke EditInstrument or fire any audio-device callback --
+    // that happens later, when MessageThreadTick picks up the stage.
     //
     // ArenaExhausted handling: during Initialize, audio has not started, so
     // on ArenaExhausted we simply grow serializationArena_ synchronously
