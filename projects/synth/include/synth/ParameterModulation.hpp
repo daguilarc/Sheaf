@@ -347,12 +347,10 @@ public:
     bool CanAllocate() const;
     std::size_t AvailableParameterSlots() const;
     void AddParameterStorageBatch(std::unique_ptr<ParameterStorageBatch> batch);
-    // The free-slot floor RequestParameterStorageBatchIfLow and the
-    // request-size floor in ParameterManager::RequestParameterStorageBatch
-    // both read. Defaults to numModulators * 2 at construction, as
-    // RequestParameterStorageBatchIfLow's own floor did before this setter
-    // existed; an app sets a larger watermark to keep more than one press's
-    // worth of storage ahead of AvailableParameterSlots().
+    // The free-slot floor RequestParameterStorageBatchIfLow reads before
+    // requesting a batch. Defaults to numModulators * 2 at construction; an
+    // app sets a larger watermark to keep more than one press's worth of
+    // storage ahead of AvailableParameterSlots().
     void SetStorageLowWatermark(std::size_t watermark) { storageLowWatermark_ = watermark; }
     std::size_t StorageLowWatermark() const { return storageLowWatermark_; }
     std::size_t ParameterCount() const { return parameterCount_; }
@@ -741,15 +739,13 @@ struct ParameterMessageOut {
     Type type = Type::ParameterStorageBatchNeeded;
     ParameterGroup* group = nullptr;
     std::size_t minimumAdditionalParameters = 0;
-    std::size_t requestedParameters = 0;
     std::size_t appActionIx = 0;
     float value = 0.0f;
     std::size_t slotIx = 0;
     std::size_t position = 0;
 
     static ParameterMessageOut ParameterStorageBatchNeeded(ParameterGroup& group,
-                                                           std::size_t minimumAdditionalParameters,
-                                                           std::size_t requestedParameters);
+                                                           std::size_t minimumAdditionalParameters);
     static ParameterMessageOut AppAction(std::size_t appActionIx, float value);
     static ParameterMessageOut AppEncoderPress(std::size_t slotIx, std::size_t position);
 };

@@ -54,9 +54,8 @@ reason for the same retry.
    `ParameterGroup::SetStorageLowWatermark(std::size_t)`; the existing
    `RequestParameterStorageBatchIfLow` reads it at its existing call sites
    (every local allocation on the audio thread), compared against
-   `AvailableParameterSlots()` as today, and
-   `ParameterManager::RequestParameterStorageBatch` uses it as the
-   request-size floor. Default unchanged (`numModulators * 2`).
+   `AvailableParameterSlots()` as today. Default unchanged
+   (`numModulators * 2`).
 3. **A patch never applies with a depth missing**, at startup or running,
    and it gets its storage the way an exhausted arena already gets grown.
    Two sites apply patch messages and both already retry the arena case:

@@ -66,16 +66,15 @@ WHEN external UI or MIDI code sends commands to the synth parameter system, THE 
 - **WHEN** `MessageIn::AppCommand(timestamp, command, value)` is created
 - **THEN** the message carries that number and value and no string
 - **AND** no controller profile can address it
-- **AND** its sort key is greater than every enumerator declared before it
 
 ## ADDED Requirements
 
 ### Requirement: spm-95 — Storage: the low watermark is a group setting
-THE parameter group SHALL let an app set the available-slot count below which an allocation requests a storage batch (`SetStorageLowWatermark`), SHALL default it to twice the modulator count, and SHALL use it in the existing low-water request at every local allocation and as the request-size floor.
+THE parameter group SHALL let an app set the available-slot count below which an allocation requests a storage batch (`SetStorageLowWatermark`), SHALL default it to twice the modulator count, and SHALL use it in the existing low-water request at every local allocation.
 
-#### Scenario: A raised watermark requests earlier
+#### Scenario: A raised watermark requests below it
 - **WHEN** the watermark is set to 100 and an allocation leaves 89 available slots
-- **THEN** a batch request for 100 is pushed (the floor is the watermark); at the default watermark on the same group, none is
+- **THEN** a batch request for the shortfall is pushed; with the watermark back at its default and available between the default and 100, none is
 
 ### Requirement: spm-91 — Storage: a batch supplied while the audio thread reads
 WHEN a parameter storage batch is supplied to a group on the message thread while the audio thread allocates, finds or counts that group's parameters, THE synth parameter modulation system SHALL append the batch without moving, reallocating or invalidating any storage the audio thread can reach, SHALL publish the new batch to the audio thread only once it is fully built, and SHALL track the pending-request state with an atomic, so that no data race exists between the two threads; THE group SHALL mark a request pending before it pushes the request, and clear the mark when the push fails, so that a batch supplied at once always leaves the group able to ask again.

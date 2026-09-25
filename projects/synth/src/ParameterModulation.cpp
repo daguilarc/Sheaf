@@ -3044,13 +3044,11 @@ bool BankSlot::OwnsPhysicalEncoder(PhysicalEncoderId encoderId) const {
 }
 
 ParameterMessageOut ParameterMessageOut::ParameterStorageBatchNeeded(ParameterGroup& group,
-                                                                     std::size_t minimumAdditionalParameters,
-                                                                     std::size_t requestedParameters) {
+                                                                     std::size_t minimumAdditionalParameters) {
     ParameterMessageOut message;
     message.type = Type::ParameterStorageBatchNeeded;
     message.group = &group;
     message.minimumAdditionalParameters = minimumAdditionalParameters;
-    message.requestedParameters = requestedParameters;
     return message;
 }
 
@@ -3872,10 +3870,8 @@ bool ParameterManager::RequestParameterStorageBatch(ParameterGroup& group, std::
     if (!OwnsGroup(group) || parameterMessageOutBus_ == nullptr || minimumAdditionalParameters == 0) {
         return false;
     }
-    const std::size_t lowWatermark = group.StorageLowWatermark();
-    const std::size_t requested = std::max(minimumAdditionalParameters, lowWatermark);
     return parameterMessageOutBus_->Push(
-        ParameterMessageOut::ParameterStorageBatchNeeded(group, minimumAdditionalParameters, requested));
+        ParameterMessageOut::ParameterStorageBatchNeeded(group, minimumAdditionalParameters));
 }
 
 MessageIn MessageIn::ParamIncDec(std::uint64_t timestamp, std::size_t slotIx, std::size_t position, float delta) {
