@@ -40,6 +40,11 @@ struct MidiAppDeviceDefault {
 struct MidiAppCatalog {
     std::vector<MidiAppAction> actions;
     std::vector<UISystemMessage> libraryKinds;
+    std::vector<MidiProfileKind> libraryDeviceKinds = {MidiProfileKind::MfTwister, MidiProfileKind::Launchpad,
+                                                        MidiProfileKind::WrldBldr};
+                                      // kinds MakeControllerWizardRegistry may append a
+                                      // library descriptor for, when the catalog's own
+                                      // deviceDefaults name no device of that kind
     std::string encoderPressAction;   // ui::Action a ParamPush dispatches, with the
                                       // position as its value; empty = the library's
                                       // HandlePress, as today

@@ -162,9 +162,10 @@ struct ControllerWizardDescriptor {
 
 // The registry the Controllers page's add row and discovery draw from, and
 // that a row's stored wizard id resolves against: one descriptor per app
-// device default, then one library descriptor (MF Twister, Launchpad,
-// WRLD.Bldr) for each of those three kinds the catalog has no device of --
-// so a device stays reachable as a starting point in every app.
+// device default, then one library descriptor for each kind in the
+// catalog's libraryDeviceKinds that the catalog has no device default of --
+// so a device stays reachable as a starting point in every app whose
+// catalog lists that kind.
 std::vector<ControllerWizardDescriptor> MakeControllerWizardRegistry(const MidiAppCatalog& catalog);
 WizardDiscovery DiscoverControllerWizards(
     const MidiDeviceList&, const MidiInstrumentConfig&,

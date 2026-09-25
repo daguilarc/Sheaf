@@ -1030,9 +1030,10 @@ inline std::vector<ui::ControlOption> BuildLaunchpadVariantOptions(LaunchpadCont
 // the view model gates on the row's literal kind (WrldBldr/Launchpad/
 // MfTwister), not on section support, so a Generic row cannot hold them. A
 // device that needs one of those starts from its own descriptor, or the
-// library one MakeControllerWizardRegistry appends for any kind an app's
-// catalog does not cover, and edits from there. Connect messages (below) are
-// unconditional on every kind, Custom included.
+// library one MakeControllerWizardRegistry appends for a kind the catalog's
+// libraryDeviceKinds lists and its device defaults do not cover, and edits
+// from there. Connect messages (below) are unconditional on every kind,
+// Custom included.
 inline constexpr const char* kCustomPresetOptionId = "custom";
 inline constexpr const char* kCustomPresetLabel = "Custom";
 inline constexpr MidiProfileKind kCustomKind = MidiProfileKind::Generic;
@@ -1088,9 +1089,12 @@ struct ControllersPageCallbacks
     std::vector<UISystemMessageChoice> analogActionCatalog;
     // The add row's Preset combo options, and the registry every wizard
     // lookup on this page resolves against. Empty means the library default
-    // (MfTwister/Launchpad/WRLD.Bldr, MidiConfigViewModel's own default) -- a
-    // host with an app catalog fills this from
-    // MakeControllerWizardRegistry(engine.MidiCatalog()).
+    // (MfTwister/Launchpad/WRLD.Bldr -- MidiAppCatalog's own default
+    // libraryDeviceKinds, with no device defaults to cover them) -- a host
+    // with an app catalog fills this from
+    // MakeControllerWizardRegistry(engine.MidiCatalog()), which appends a
+    // library descriptor only for a kind that catalog's own
+    // libraryDeviceKinds lists and its device defaults do not cover.
     std::vector<ControllerWizardDescriptor> layouts;
     // The app's gesture count. Unset means no cap (MidiConfigViewModel's own
     // default) -- a host with an app catalog fills this from

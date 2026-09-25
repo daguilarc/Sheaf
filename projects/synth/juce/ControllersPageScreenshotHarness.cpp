@@ -365,10 +365,18 @@ private:
 
             const std::vector<synth::ControllerWizardDescriptor> registry =
                 synth::MakeControllerWizardRegistry(catalog_);
-            Require(registry.size() == catalog_.deviceDefaults.size() + 1,
+            const std::size_t uncoveredLibraryKinds = std::count_if(
+                catalog_.libraryDeviceKinds.begin(), catalog_.libraryDeviceKinds.end(),
+                [this](synth::MidiProfileKind kind) {
+                    return std::none_of(catalog_.deviceDefaults.begin(), catalog_.deviceDefaults.end(),
+                                        [kind](const synth::MidiAppDeviceDefault& deviceDefault) {
+                                            return deviceDefault.kind == kind;
+                                        });
+                });
+            Require(registry.size() == catalog_.deviceDefaults.size() + uncoveredLibraryKinds,
                     "state 3 positive control precondition: registry is this render's own catalog devices plus "
-                    "exactly one uncovered library kind (WRLD.Bldr) -- proves the fixture reaches the state it "
-                    "claims, busted or not");
+                    "one library device per kind in catalog_.libraryDeviceKinds no device default covers -- "
+                    "proves the fixture reaches the state it claims, busted or not");
             Require(combo_->getNumItems() == static_cast<int>(registry.size()) + 1,
                     "state 3: rendered combo item count is registry size + one Custom entry");
             if (bust)

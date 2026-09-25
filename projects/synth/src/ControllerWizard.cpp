@@ -926,14 +926,16 @@ private:
 }  // namespace
 
 // A device must stay reachable as a starting point in every app: the
-// catalog's own devices come first, then one library descriptor for each of
-// MfTwister/Launchpad/WRLD.Bldr the catalog has no device of, so an app that
-// never named a kind (or named none at all) still offers it. An app whose
+// catalog's own devices come first, then one library descriptor for each
+// kind in catalog.libraryDeviceKinds the catalog has no device of, so an app
+// that lists a kind (or names no device of it) still offers it. An app whose
 // catalog already covers a kind keeps only its own device(s) for it -- the
 // library entry would otherwise duplicate a kind the operator already sees.
+// A kind absent from libraryDeviceKinds gets no library descriptor even when
+// the catalog has no device of it, so an app can offer only its own presets.
 std::vector<ControllerWizardDescriptor> MakeControllerWizardRegistry(const MidiAppCatalog& catalog) {
     std::vector<ControllerWizardDescriptor> registry;
-    registry.reserve(catalog.deviceDefaults.size() + 3);
+    registry.reserve(catalog.deviceDefaults.size() + catalog.libraryDeviceKinds.size());
     for (const MidiAppDeviceDefault& deviceDefault : catalog.deviceDefaults) {
         registry.push_back(ControllerWizardDescriptor{
             .id = deviceDefault.id,
@@ -954,7 +956,12 @@ std::vector<ControllerWizardDescriptor> MakeControllerWizardRegistry(const MidiA
                            });
     };
 
-    if (!catalogCovers(MidiProfileKind::MfTwister)) {
+    const auto libraryOffers = [&catalog](MidiProfileKind kind) {
+        return std::find(catalog.libraryDeviceKinds.begin(), catalog.libraryDeviceKinds.end(), kind) !=
+               catalog.libraryDeviceKinds.end();
+    };
+
+    if (libraryOffers(MidiProfileKind::MfTwister) && !catalogCovers(MidiProfileKind::MfTwister)) {
         registry.push_back(ControllerWizardDescriptor{
             .id = std::string(kMfTwisterWizardId),
             .displayName = std::string(kMfTwisterDisplayName),
@@ -980,7 +987,7 @@ std::vector<ControllerWizardDescriptor> MakeControllerWizardRegistry(const MidiA
         {MidiProfileKind::WrldBldr, kLibraryWrldBldrWizardId},
     }};
     for (const LibraryDevice& library : libraryDevices) {
-        if (catalogCovers(library.kind)) {
+        if (!libraryOffers(library.kind) || catalogCovers(library.kind)) {
             continue;
         }
         std::string id(library.id);

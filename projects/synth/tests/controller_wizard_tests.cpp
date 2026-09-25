@@ -1083,6 +1083,28 @@ TEST_CASE(MakeControllerWizardRegistryOmitsTheLibraryWrldBldrEntryWhenTheCatalog
     REQUIRE_TRUE(sawLibraryLaunchpad);
 }
 
+// An app whose catalog sets an empty libraryDeviceKinds (Frogg3rs) offers
+// only its own presets: no library descriptor is appended for a kind its
+// device defaults do not cover, even though the default libraryDeviceKinds
+// would otherwise offer one.
+TEST_CASE(MakeControllerWizardRegistryWithEmptyLibraryDeviceKindsReturnsOnlyCatalogDefaults) {
+    synth::MidiAppCatalog catalog;
+    catalog.libraryDeviceKinds.clear();
+    catalog.deviceDefaults.push_back(AppDefault(
+        "froggers.twister", "MIDI Fighter Twister", synth::MidiProfileKind::MfTwister,
+        {"Midi Fighter Twister"}, {"Midi Fighter Twister"}, synth::MidiControllerProfileConfig{}));
+    catalog.deviceDefaults.push_back(AppDefault(
+        "froggers.apc40.generic", "Akai APC40 mkII (Generic)", synth::MidiProfileKind::Generic,
+        {"APC40 mkII"}, {"APC40 mkII"}, synth::MidiControllerProfileConfig{}));
+
+    const std::vector<synth::ControllerWizardDescriptor> registry =
+        synth::MakeControllerWizardRegistry(catalog);
+
+    REQUIRE_TRUE(registry.size() == 2);
+    REQUIRE_TRUE(registry[0].id == "froggers.twister");
+    REQUIRE_TRUE(registry[1].id == "froggers.apc40.generic");
+}
+
 TEST_CASE(AppDefaultControllerWizardValidatesEmptyFormAndGeneratesTheStoredConfig) {
     synth::MidiControllerProfileConfig storedConfig;
     storedConfig.analogInput =
