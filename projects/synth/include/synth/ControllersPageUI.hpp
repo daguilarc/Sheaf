@@ -38,8 +38,8 @@ namespace synth::runtime_ui {
 inline constexpr const char* kEndpointNoneOptionId = "none";
 inline constexpr const char* kEndpointOfflineOptionId = "keep_offline";
 // The Audio to MIDI section's Sends choice: Off is the runtime's own entry,
-// never a catalog content id (smi-19), so it needs its own option id no
-// content can collide with.
+// never a catalog content id, so it needs its own option id no content can
+// collide with.
 inline constexpr const char* kAppMidiOutSendsOffOptionId = "off";
 inline constexpr const char* kAppMidiOutSendsOffLabel = "Off";
 
@@ -265,7 +265,7 @@ inline std::string ConnectMessageAddRow(std::size_t controllerIx)
     return ConnectMessages(controllerIx) + ".add_row";
 }
 
-// sru-71: the Audio to MIDI section. One instance on the page, so these are
+// The Audio to MIDI section. One instance on the page, so these are
 // plain constants, not per-controller functions.
 inline constexpr const char* kAppMidiOutSection = "runtime.controllers.app_midi_out";
 inline constexpr const char* kAppMidiOutHeading = "runtime.controllers.app_midi_out.heading";
@@ -1077,11 +1077,11 @@ struct ControllersPageCallbacks
     // MakeControllerWizardRegistry(engine.MidiCatalog()).
     std::vector<ControllerWizardDescriptor> layouts;
 
-    // sru-71, the Audio to MIDI section: reads Engine::AppMidiOutConfig().
+    // The Audio to MIDI section: reads Engine::AppMidiOutConfig().
     std::function<AppMidiOutConfig()> appMidiOutSnapshot;
     // Calls Engine::SetAppMidiOutConfig(...) with the edited value.
     std::function<void(AppMidiOutConfig)> commitAppMidiOut;
-    // The app's declared MIDI-out contents (smi-19). Empty means the section
+    // The app's declared MIDI-out contents. Empty means the section
     // is not shown at all.
     std::vector<MidiAppMidiOutContent> appMidiOutContents;
     // The app MIDI-out port's own online/offline/unconfigured status, from
@@ -1342,11 +1342,11 @@ private:
         return true;
     }
 
-    // The save-and-status tail every committed edit on this page takes
-    // (sru-64), after its own commit has landed: mark dirty, save runtime
+    // The save-and-status tail every committed edit on this page takes,
+    // after its own commit has landed: mark dirty, save runtime
     // configuration, then set exactly one status -- the save failure text
     // without losing the edit, or the caller's own success text.
-    // Commit() and the Audio to MIDI section's commit (sru-71) both call
+    // Commit() and the Audio to MIDI section's commit both call
     // this after their own commit lands.
     void SaveCommittedEdit(std::string successText)
     {
@@ -2006,7 +2006,7 @@ private:
         }
     }
 
-    // sru-71: reads the current setting, edits one field, commits it through
+    // Reads the current setting, edits one field, commits it through
     // commitAppMidiOut, then saves at once through the same tail Commit()
     // uses (SaveCommittedEdit) -- never through commitInstrument/
     // EditInstrument, since the MIDI-out port is not a controller row.
@@ -2338,10 +2338,10 @@ private:
             return names;
         };
 
-        // sru-71: the Audio to MIDI section. Built from the callbacks'
+        // The Audio to MIDI section. Built from the callbacks'
         // snapshot data alone, never from MidiConfigViewModel -- the
         // MIDI-out port is not a controller row. Off first, then the
-        // catalog's contents in declaration order (smi-19); an app whose
+        // catalog's contents in declaration order; an app whose
         // catalog lists none gets no section at all.
         const auto emitAppMidiOutSection = [&](ui::Builder& scroll) {
             if (appMidiOutContents.empty())
@@ -2402,7 +2402,7 @@ private:
                                     ui::Action::Named(Actions::kAppMidiOutSendsSelect),
                                     sendsStyle);
 
-                        // sru-71: the Channel field shows for every state,
+                        // The Channel field shows for every state,
                         // including Off (the scenario "A new configuration
                         // shows Off and None" names channel 0 among what the
                         // section shows then); only CC and Velocity are

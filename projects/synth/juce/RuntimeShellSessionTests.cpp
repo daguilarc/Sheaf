@@ -286,8 +286,8 @@ struct InputProbeApp final {
 // every ProcessBlock call -- used only to prove the running Runtime<App>
 // actually forwards an app-produced MIDI-out event to MidiSender's app
 // sink. Engine::ProcessBlock enqueues an app event only when
-// appMidiOutRoutingEnabled_ is true, and Runtime<App>::Start() is the one
-// call site that sets it, via engine_.EnableAppMidiOutRouting().
+// appMidiOutRoutingEnabled_ is true, which Runtime<App>::Start() sets via
+// engine_.EnableAppMidiOutRouting() before the app ever runs.
 struct AppMidiOutRoutingProbeApp final {
     static synth::RuntimeConfig Config() {
         synth::RuntimeConfig config;
@@ -897,13 +897,12 @@ void CheckDeselectingInputClosesDeviceAndUnroutes(const std::filesystem::path& p
             "deselecting input returns the routed signal to not-routed");
 }
 
-// D3: engine_.EnableAppMidiOutRouting() in runtime/Runtime.hpp's Start() is
-// the only call site that turns appMidiOutRoutingEnabled_ on; without it,
-// Engine::ProcessBlock never enqueues an app-produced MIDI-out event, no
-// matter what the app appends to block.midiOut. Runs the probe app through
-// a real, started Runtime<App> (FakeDeviceRuntime), delivers one device
-// block, and requires the app's one Control Change to reach MidiSender's
-// app sink.
+// engine_.EnableAppMidiOutRouting() in runtime/Runtime.hpp's Start() turns
+// appMidiOutRoutingEnabled_ on; without it, Engine::ProcessBlock never
+// enqueues an app-produced MIDI-out event, no matter what the app appends
+// to block.midiOut. Runs the probe app through a real, started Runtime<App>
+// (FakeDeviceRuntime), delivers one device block, and requires the app's
+// one Control Change to reach MidiSender's app sink.
 void CheckAppMidiOutRoutingReachesTheSender(const std::filesystem::path& parent) {
     FakeDeviceRuntime<AppMidiOutRoutingProbeApp> host(FreshRoot(parent, "app-midi-out-routing"), 2, 2);
 

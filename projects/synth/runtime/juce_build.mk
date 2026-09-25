@@ -51,6 +51,7 @@ SYNTH_RUNTIME_SRC := $(SYNTH_ROOT)/runtime/HostDataPaths.cpp
 SYNTH_HEADERS := $(SYNTH_ROOT)/include/synth/AppConcepts.hpp $(SYNTH_ROOT)/include/synth/MidiAppCatalog.hpp \
 	$(SYNTH_ROOT)/include/synth/AppContext.hpp \
 	$(SYNTH_ROOT)/include/synth/Engine.hpp \
+	$(SYNTH_ROOT)/include/synth/AppMidiOutRuntimeCallbacks.hpp \
 	$(SYNTH_ROOT)/include/synth/AtomicColor.hpp $(SYNTH_ROOT)/include/synth/ButtonGrid.hpp \
 	$(SYNTH_ROOT)/include/synth/ParameterModulation.hpp $(SYNTH_ROOT)/include/synth/MidiController.hpp \
 	$(SYNTH_ROOT)/include/synth/Json.hpp \

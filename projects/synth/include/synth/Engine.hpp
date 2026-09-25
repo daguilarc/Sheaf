@@ -287,9 +287,9 @@ public:
 
         LoadRuntimeConfiguration();
 
-        // sar-36: the app registered this in its Init() just above, so it is
+        // The app registered this in its Init() just above, so it is
         // in place before this first, one-time delivery of the loaded
-        // setting; only a host that enabled routing (sar-37) ever sees this
+        // setting; only a host that enabled routing ever sees this
         // call, and SetAppMidiOutConfig delivers every later change.
         if (appMidiOutRoutingEnabled_ && context_.appMidiOutSettingsChangedCallback) {
             context_.appMidiOutSettingsChangedCallback(appMidiOutConfig_.settings);
@@ -418,7 +418,7 @@ public:
     //      at it, then app_.ProcessBlock(block) exactly once; after it, in a
     //      host that called EnableAppMidiOutRouting(), route each entry the
     //      app appended into the sender's app MIDI-out sink, due at its
-    //      frame's output time (sar-37)
+    //      frame's output time
     //   7. throttled PopulateUIState every uiPublishInterval_ blocks
     void ProcessBlock(AudioBlock& block, std::uint64_t timestamp) {
         const std::uint64_t requestedSyncWord =
@@ -761,7 +761,7 @@ public:
     const MasterClock& Clock() const { return masterClock_; }
 
     // Turns on the engine's own routing of the app's per-block MIDI-out list
-    // into the sender (sar-37): each entry becomes a scheduled channel
+    // into the sender: each entry becomes a scheduled channel
     // message to MidiSender::kAppMidiOutSinkIx. Must be called before
     // Initialize() -- Runtime::Start and synth_browser::Runtime::Start do
     // this immediately before engine_.Initialize() -- because delivering
@@ -781,7 +781,7 @@ public:
     // which never enables routing, reads this after ProcessBlock returns.
     const AppMidiOutEventList& AppMidiOutEvents() const noexcept { return appMidiOutList_; }
 
-    // sar-36: the stored MIDI-out setting (content, channel, CC number,
+    // The stored MIDI-out setting (content, channel, CC number,
     // velocity and port). Message-thread only.
     const synth::AppMidiOutConfig& AppMidiOutConfig() const noexcept { return appMidiOutConfig_; }
     // Message-thread only: stores the new value, then calls the app-context
@@ -1603,7 +1603,7 @@ private:
     PatchMessageInBus patchInputBus_;
     MessageOutBus patchOutputBus_;
     MidiSender midiSender_;
-    // sar-37: the current block's app MIDI-out list, and whether
+    // The current block's app MIDI-out list, and whether
     // ProcessBlock routes it into midiSender_. EnableAppMidiOutRouting()
     // sets the flag before Initialize() runs; initializeStarted_ guards
     // against enabling it any later.
@@ -1611,7 +1611,7 @@ private:
     bool appMidiOutRoutingEnabled_ = false;
     bool initializeStarted_ = false;
     std::uint64_t appMidiOutSequence_ = 0;
-    // sar-36: the stored setting, message-thread-only state (like
+    // The stored setting, message-thread-only state (like
     // instrumentConfig_ is meant to be read/written only from the message
     // thread; unlike it, nothing on the audio thread reads this directly --
     // the app learns of it only through appMidiOutSettingsChangedCallback).

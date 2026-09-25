@@ -320,7 +320,7 @@ private:
     bool reconciling_ = false;
 };
 
-// Releases the standalone or browser MIDI-out port (sar-36): clears the
+// Releases the standalone or browser MIDI-out port: clears the
 // sender's app MIDI-out sink first (so no further app message can reach the
 // port being closed), then sends Control Change 123 value 0 on status-byte
 // channels 0 to 15, in that order, through `send`, then calls `close`.

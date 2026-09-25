@@ -182,7 +182,7 @@ private:
 };
 
 // One channel message the app writes to its MIDI out this block, due at
-// `frame` within the block (sar-37).
+// `frame` within the block.
 struct AppMidiOutEvent {
     std::size_t frame = 0;
     std::uint8_t statusByte = 0;
@@ -241,7 +241,7 @@ struct AudioBlock {
     // explicitly from immutable RuntimeConfig; InputView() clamps actual
     // numInputChannels defensively into [0, requested].
     int numRequestedInputChannels = 0;
-    // Engine-owned, cleared before every callback (sar-37). The app appends
+    // Engine-owned, cleared before every callback. The app appends
     // channel messages here; null only in a default-constructed view. Non-owning
     // and callback-lifetime-only, like clockPlan above.
     AppMidiOutEventList* midiOut = nullptr;
@@ -368,7 +368,7 @@ struct AppContext {
         }
     }
 
-    // sar-36: registers (or, with an empty std::function, clears) the
+    // Registers (or, with an empty std::function, clears) the
     // callback the engine invokes on the message thread with the current
     // MIDI-out settings -- once during Initialize(), after
     // LoadRuntimeConfiguration() and after the app's own Init() has

@@ -2333,7 +2333,7 @@ struct AppMidiOutEndToEndSink final : synth::IMidiOutputSink
     std::vector<synth::BasicMidi> delivered;
 };
 
-// Minimal app for the sar-36/sar-37 end-to-end test below: records every
+// Minimal app for the app MIDI-out end-to-end test below: records every
 // settings-changed notification and appends exactly one app MIDI-out event on
 // its first ProcessBlock only, so a second, timestamp-advancing block (needed
 // to make the first block's already-computed due time actually due) enqueues
@@ -2367,7 +2367,7 @@ struct AppMidiOutEndToEndApp
     ContractSurface surface;
 };
 
-// End-to-end sar-36/sar-37/sru-71 coverage: drives the real Controllers-page
+// End-to-end coverage: drives the real Controllers-page
 // commit callback that BrowserRuntimeMainServices wires (not
 // Engine::SetAppMidiOutConfig() called directly) through a real browser
 // Runtime's Start(), across a save and a reload, and confirms delivery at the
@@ -2451,7 +2451,7 @@ void TestBrowserRuntimeMainServicesCommitSaveReloadRoutesAppMidiOut()
     std::filesystem::remove_all(dataRoot);
 }
 
-// sbw-13: MidiSender::Start() must run
+// MidiSender::Start() must run
 // only on the main thread, never lazily from inside the AudioWorklet
 // callback -- spawning a pthread there is not a safe call under
 // -sPTHREAD_POOL_SIZE=1 and silently stops the worklet. Reads IsRunning()

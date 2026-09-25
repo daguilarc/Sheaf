@@ -1,7 +1,6 @@
-// sbw-13: the app's one MIDI-out port in the browser, keyed by
-// APP_MIDI_OUT_KEY (the largest 32-bit value, matching
-// BrowserMidiBridge.hpp's kAppMidiOutBridgeKey) rather than a controller
-// slot index.
+// The app's one MIDI-out port in the browser, keyed by APP_MIDI_OUT_KEY
+// (the largest 32-bit value, matching BrowserMidiBridge.hpp's
+// kAppMidiOutBridgeKey) rather than a controller slot index.
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
 import { readFile } from "node:fs/promises";
@@ -247,8 +246,8 @@ test("controller ports keep their own traffic across a MIDI-out reconnect, and a
   assert.deepEqual(appPort2.sent.map((m) => m.bytes), [[0xb0, 7, 51]], "the reconnected app port receives the new app traffic");
   // The old app port is released as part of the reconnect (a different
   // identifier), so it gets its own All Notes Off before being dropped --
-  // sbw-13's own release rule -- on top of the one message already sent to
-  // it; no MORE app traffic reaches it after that.
+  // the app port's own release rule -- on top of the one message already
+  // sent to it; no MORE app traffic reaches it after that.
   const allNotesOffOnOldPort = Array.from({ length: 16 }, (_unused, channel) => [0xb0 + channel, 123, 0]);
   assert.deepEqual(
     appPort1.sent.map((m) => m.bytes),

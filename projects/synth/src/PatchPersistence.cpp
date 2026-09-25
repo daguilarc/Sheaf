@@ -319,7 +319,7 @@ bool LoadRuntimeConfigJSON(JSON root,
     }
 
     // A missing, malformed or out-of-range midiOut entry loads as the Off
-    // default and never rejects the rest of the document (sar-36).
+    // default and never rejects the rest of the document.
     AppMidiOutConfig parsedMidiOut;
     if (!FromJSON(root.Get("midiOut"), parsedMidiOut)) {
         parsedMidiOut = AppMidiOutConfig{};

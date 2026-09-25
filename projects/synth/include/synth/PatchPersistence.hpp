@@ -36,7 +36,7 @@ inline constexpr int kRuntimeConfigSchemaVersion = 3;
 JSON ToJSON(JsonArena& arena, const SyncConfig& config);
 bool FromJSON(JSON json, SyncConfig& config);
 
-// The app's one MIDI-out setting: what it sends (sar-36). Independent of the
+// The app's one MIDI-out setting: what it sends. Independent of the
 // output port, since this is also what the engine hands the app through its
 // MIDI-out callback -- the app has no use for the port.
 struct AppMidiOutSettings {
@@ -49,7 +49,7 @@ struct AppMidiOutSettings {
 };
 
 // Adds the output port reference: what the runtime configuration persists
-// and the standalone/browser port reconcilers read (sar-36).
+// and the standalone/browser port reconcilers read.
 struct AppMidiOutConfig {
     AppMidiOutSettings settings;
     MidiEndpointRef port;
@@ -84,7 +84,7 @@ bool IsIntegerInRange(double value, double lo, double hi);
 // the version file to reopen at launch. BuildRuntimeConfigJSON omits the key
 // entirely when the caller passes nullopt, so a caller that does not know
 // about this record writes exactly what it always has.
-// midiOut (sar-36): a caller that does not pass one writes/reads the Off
+// midiOut: a caller that does not pass one writes/reads the Off
 // default, so a caller that does not know about this setting behaves
 // exactly as it always has. Appended last so no existing positional call
 // site needs to change.

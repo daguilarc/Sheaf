@@ -364,8 +364,8 @@ public:
         Reconcile(detail::EnumerateDevices());
     }
 
-    // Wired to engine.SetAppMidiOutPortChangedCallback (task 5, forwarded by
-    // Runtime): the stored MIDI-out port changed -- a port picked or
+    // Wired to engine.SetAppMidiOutPortChangedCallback, forwarded by
+    // Runtime: the stored MIDI-out port changed -- a port picked or
     // cleared on the Controllers page, or a name-fallback write-back from
     // this manager's own reconcile pass. Reconciles the app MIDI-out slot
     // alone, with a fresh enumeration; the reconciler's own re-entry guard

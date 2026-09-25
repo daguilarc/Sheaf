@@ -3916,7 +3916,7 @@ TEST_CASE(engine_takes_a_file_export_with_no_handler_and_logs_it) {
 
 namespace {
 
-// Minimal app for sar-37's per-block MIDI-out list tests. All state is
+// Minimal app for the per-block app MIDI-out list tests below. All state is
 // static, matching EngineTestApp's idiom: tests set onProcessBlock before
 // constructing the Engine.
 struct AppMidiOutTestApp {
@@ -4218,8 +4218,8 @@ TEST_CASE(an_app_that_writes_nothing_sends_no_app_midi_out_traffic) {
 
 namespace {
 
-// Minimal app for sar-36's host-routing tests: registers the MIDI-out
-// settings callback in Init() and records every call.
+// Minimal app for the app MIDI-out host-routing tests below: registers the
+// MIDI-out settings callback in Init() and records every call.
 struct AppMidiOutSettingsTestApp {
     static inline std::vector<synth::AppMidiOutSettings> received;
 

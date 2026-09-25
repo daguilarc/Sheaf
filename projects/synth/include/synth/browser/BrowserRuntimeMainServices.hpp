@@ -1,5 +1,6 @@
 #pragma once
 
+#include "synth/AppMidiOutRuntimeCallbacks.hpp"
 #include "synth/ControllersPageUI.hpp"
 #include "synth/ControllerWizardDiscoveryCache.hpp"
 #include "synth/Engine.hpp"
@@ -77,16 +78,9 @@ public:
         callbacks.analogActionCatalog = synth::MakeAnalogAppActionChoices(engine_.MidiCatalog());
         callbacks.layouts = synth::MakeControllerWizardRegistry(engine_.MidiCatalog());
         wizardDiscoveryCache_.SetRegistry(callbacks.layouts);
-        callbacks.appMidiOutSnapshot = [this] {
-            return engine_.AppMidiOutConfig();
-        };
-        callbacks.commitAppMidiOut = [this](synth::AppMidiOutConfig config) {
-            engine_.SetAppMidiOutConfig(std::move(config));
-        };
-        callbacks.appMidiOutContents = engine_.MidiCatalog().midiOutContents;
-        callbacks.appMidiOutPortStatus = [this] {
+        synth::FillAppMidiOutCallbacks(callbacks, engine_, [this] {
             return midiBridge_.AppMidiOutStatus();
-        };
+        });
         return callbacks;
     }
 

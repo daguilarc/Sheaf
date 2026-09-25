@@ -2,6 +2,7 @@
 
 #include "Runtime.hpp"
 
+#include "synth/AppMidiOutRuntimeCallbacks.hpp"
 #include "synth/ControllerWizardDiscoveryCache.hpp"
 #include "synth/ControllersPageUI.hpp"
 #include "synth/RuntimeFileService.hpp"
@@ -78,16 +79,9 @@ public:
         callbacks.analogActionCatalog = synth::MakeAnalogAppActionChoices(runtime_.GetEngine().MidiCatalog());
         callbacks.layouts = synth::MakeControllerWizardRegistry(runtime_.GetEngine().MidiCatalog());
         wizardDiscoveryCache_.SetRegistry(callbacks.layouts);
-        callbacks.appMidiOutSnapshot = [this] {
-            return runtime_.GetEngine().AppMidiOutConfig();
-        };
-        callbacks.commitAppMidiOut = [this](synth::AppMidiOutConfig config) {
-            runtime_.GetEngine().SetAppMidiOutConfig(std::move(config));
-        };
-        callbacks.appMidiOutContents = runtime_.GetEngine().MidiCatalog().midiOutContents;
-        callbacks.appMidiOutPortStatus = [this] {
+        synth::FillAppMidiOutCallbacks(callbacks, runtime_.GetEngine(), [this] {
             return runtime_.MidiConnections().AppMidiOutStatus();
-        };
+        });
         return callbacks;
     }
 
