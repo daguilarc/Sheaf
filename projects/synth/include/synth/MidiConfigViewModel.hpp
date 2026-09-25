@@ -425,6 +425,17 @@ public:
     void SetAnalogActionCatalog(std::vector<UISystemMessageChoice> choices);
     const std::vector<UISystemMessageChoice>& AnalogActionCatalog() const { return analogActionCatalog_; }
 
+    // The app's gesture count, unset by default. Unset, ApplyMappingEdit,
+    // AddSingle and AddBlock accept any gesture index a row names, as today.
+    // Set, they refuse an edit that raises a row's count of gesture
+    // references (a Gestures row's index, or a System row's Hold/Toggle
+    // Gesture Select or Set Gesture Value argument) at or above this count,
+    // with reason "gesture must be an integer 0-N" (N = count - 1).
+    // DeleteRow never refuses. A host with an app catalog calls
+    // SetGestureCount(engine.Manager().GestureCount()) once at construction.
+    void SetGestureCount(std::optional<std::size_t> count) { gestureCount_ = count; }
+    std::optional<std::size_t> GestureCount() const { return gestureCount_; }
+
     // The add row's Preset combo options, and the registry every wizard
     // lookup resolves against: installing a preset, comparing a row's
     // config against the preset that created it, and restoring a diverged
@@ -689,6 +700,7 @@ private:
     std::vector<MidiControllerRowVM> controllers_;
     std::vector<UISystemMessageChoice> messageCatalog_ = UISystemMessageCatalog();
     std::vector<UISystemMessageChoice> analogActionCatalog_;
+    std::optional<std::size_t> gestureCount_;
     // Empty means "use the default registry"; Layouts() resolves that
     // default lazily so this header need not depend on ControllerWizard.hpp.
     std::vector<ControllerWizardDescriptor> layouts_;

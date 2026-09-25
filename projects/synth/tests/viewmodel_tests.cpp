@@ -400,6 +400,142 @@ TEST_CASE(RowFieldValueReadsAnalogGestureFieldsAndSceneBlend) {
     REQUIRE_TRUE(value == static_cast<double>(analogInput.sceneBlend->cc));
 }
 
+// sru-70 scenario "A gesture number past the app's gestures is refused": a
+// host that reports a gesture count refuses an edit that names a gesture at
+// or above it, keeping the stored configuration.
+TEST_CASE(GestureFieldPastTheAppsGesturesIsRefused) {
+    MidiConfigViewModel vm;
+    MidiInstrumentConfig instrument;
+    MidiControllerSlot slot = MakeWrldBldrSlot("wrld");
+    slot.config.analogInput->gestures.resize(1);
+    slot.config.analogInput->gestures[0].gestureIx = 0;
+    REQUIRE_TRUE(instrument.AddController(std::move(slot)));
+    MidiConnectionState connection;
+    connection.controllers.push_back(MidiControllerConnection{});
+    vm.Rebuild(instrument, connection);
+    vm.SetGestureCount(8);
+
+    MidiInstrumentConfig out;
+    std::string reason;
+    REQUIRE_TRUE(!vm.ApplyMappingEdit(0, MidiConfigSection::Analogs, 0, MidiMappingRowVM::Field::GestureIx, 8.0, out,
+                                      &reason));
+    REQUIRE_TRUE(reason == "gesture must be an integer 0-7");
+    REQUIRE_TRUE(out.controllers.empty());
+
+    // The persisted model ApplyMappingEdit never wrote `out` to still holds
+    // the value from before the refused edit.
+    REQUIRE_TRUE(instrument.controllers[0].config.analogInput->gestures[0].gestureIx == 0);
+}
+
+// sru-70 scenario "A block or an add that reaches past the app's gestures is
+// refused": three routes that can grow the count of gesture references past
+// a set count -- a Gesture block landing on 8, "+" with 0-7 already taken,
+// and a Hold Gesture Select row's argument set to 8 -- each refused, with
+// the stored configuration unchanged.
+TEST_CASE(GestureCountCapRefusesABlockAnAddAndAHoldGestureSelectArgument) {
+    // (a) A Gesture block whose next-free start lands at 7 and spans the
+    // default 2 CCs reaches gesture 8.
+    {
+        MidiConfigViewModel vm;
+        MidiInstrumentConfig instrument;
+        MidiControllerSlot slot = MakeGenericSlot("blank");
+        synth::AnalogMidiInConfig analog;
+        for (std::size_t ix = 0; ix < 7; ++ix) {
+            analog.gestures.push_back(synth::AnalogMidiMapping{
+                .control = MidiControlAddress{.channel = 0, .cc = static_cast<std::uint8_t>(ix)}, .gestureIx = ix});
+        }
+        slot.config.analogInput = analog;
+        REQUIRE_TRUE(instrument.AddController(std::move(slot)));
+        MidiConnectionState connection;
+        connection.controllers.push_back(MidiControllerConnection{});
+        vm.Rebuild(instrument, connection);
+        vm.SetGestureCount(8);
+
+        MidiInstrumentConfig out;
+        std::string reason;
+        REQUIRE_TRUE(
+            !vm.AddBlock(0, MidiConfigSection::Analogs, MidiMappingRowVM::RowGroup::AnalogGesture, out, &reason));
+        REQUIRE_TRUE(reason == "gesture must be an integer 0-7");
+        REQUIRE_TRUE(instrument.controllers[0].config.analogInput->gestures.size() == 7);
+    }
+
+    // (b) "+" with gestures 0 to 7 already taken picks gesture 8.
+    {
+        MidiConfigViewModel vm;
+        MidiInstrumentConfig instrument;
+        MidiControllerSlot slot = MakeGenericSlot("blank");
+        synth::AnalogMidiInConfig analog;
+        for (std::size_t ix = 0; ix < 8; ++ix) {
+            analog.gestures.push_back(synth::AnalogMidiMapping{
+                .control = MidiControlAddress{.channel = 0, .cc = static_cast<std::uint8_t>(ix)}, .gestureIx = ix});
+        }
+        slot.config.analogInput = analog;
+        REQUIRE_TRUE(instrument.AddController(std::move(slot)));
+        MidiConnectionState connection;
+        connection.controllers.push_back(MidiControllerConnection{});
+        vm.Rebuild(instrument, connection);
+        vm.SetGestureCount(8);
+
+        MidiInstrumentConfig out;
+        std::string reason;
+        REQUIRE_TRUE(
+            !vm.AddSingle(0, MidiConfigSection::Analogs, MidiMappingRowVM::RowGroup::AnalogGesture, out, &reason));
+        REQUIRE_TRUE(reason == "gesture must be an integer 0-7");
+        REQUIRE_TRUE(instrument.controllers[0].config.analogInput->gestures.size() == 8);
+    }
+
+    // (c) 8 typed as a Hold Gesture Select row's argument.
+    {
+        MidiConfigViewModel vm;
+        MidiInstrumentConfig instrument;
+        REQUIRE_TRUE(instrument.AddController(MakeGenericSlot("blank")));
+        MidiConnectionState connection;
+        connection.controllers.push_back(MidiControllerConnection{});
+        vm.Rebuild(instrument, connection);
+
+        MidiInstrumentConfig afterAdd;
+        std::string reason;
+        REQUIRE_TRUE(vm.AddSingle(0, MidiConfigSection::SystemMessages, MidiMappingRowVM::RowGroup::System, afterAdd,
+                                  &reason));
+        vm.Rebuild(afterAdd, connection);
+
+        MidiInstrumentConfig withKind;
+        REQUIRE_TRUE(vm.ApplyMappingEdit(0, MidiConfigSection::SystemMessages, 0, MidiMappingRowVM::Field::MessageKind,
+                                         static_cast<double>(UISystemMessageIndex(UISystemMessage::HoldGestureSelect)),
+                                         withKind, &reason));
+        vm.Rebuild(withKind, connection);
+        vm.SetGestureCount(8);
+
+        MidiInstrumentConfig out;
+        REQUIRE_TRUE(!vm.ApplyMappingEdit(0, MidiConfigSection::SystemMessages, 0, MidiMappingRowVM::Field::MessageArg,
+                                          8.0, out, &reason));
+        REQUIRE_TRUE(reason == "gesture must be an integer 0-7");
+        REQUIRE_TRUE(withKind.controllers[0].config.systemMessages[0].press.gestureIx == 0);
+    }
+}
+
+// sru-70 scenario "A host that reports no count keeps today's behaviour":
+// with no gesture count set, a gesture number past any app's is still
+// stored.
+TEST_CASE(GestureCountUnsetAcceptsAnyGestureNumber) {
+    MidiConfigViewModel vm;
+    MidiInstrumentConfig instrument;
+    MidiControllerSlot slot = MakeWrldBldrSlot("wrld");
+    slot.config.analogInput->gestures.resize(1);
+    slot.config.analogInput->gestures[0].gestureIx = 0;
+    REQUIRE_TRUE(instrument.AddController(std::move(slot)));
+    MidiConnectionState connection;
+    connection.controllers.push_back(MidiControllerConnection{});
+    vm.Rebuild(instrument, connection);
+    REQUIRE_TRUE(!vm.GestureCount().has_value());
+
+    MidiInstrumentConfig out;
+    std::string reason;
+    REQUIRE_TRUE(
+        vm.ApplyMappingEdit(0, MidiConfigSection::Analogs, 0, MidiMappingRowVM::Field::GestureIx, 8.0, out, &reason));
+    REQUIRE_TRUE(out.controllers[0].config.analogInput->gestures[0].gestureIx == 8);
+}
+
 TEST_CASE(RowFieldValueReadsSceneBlendWhenUnassigned) {
     // Review fallout: RowFieldValue used to return false for an
     // UNASSIGNED sceneBlend even though the ConfigLevel row always

@@ -81,6 +81,7 @@ public:
         callbacks.messageCatalog = synth::MakeUISystemMessageChoices(engine_.MidiCatalog());
         callbacks.analogActionCatalog = synth::MakeAnalogAppActionChoices(engine_.MidiCatalog());
         callbacks.layouts = synth::MakeControllerWizardRegistry(engine_.MidiCatalog());
+        callbacks.gestureCount = engine_.Manager().GestureCount();
         wizardDiscoveryCache_.SetRegistry(callbacks.layouts);
         return callbacks;
     }

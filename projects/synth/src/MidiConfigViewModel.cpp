@@ -2210,6 +2210,33 @@ bool HasDuplicateSystemAddress(const std::vector<MidiControllerSystemMessageAsso
     return false;
 }
 
+// The slot's gesture references at or above `count`: a Gestures row's
+// gestureIx, and a System row whose press is a SetGestureSelect,
+// ToggleGestureSelect or SetGestureValue message carrying a gesture index
+// there. Used to refuse an edit that raises this count once a gesture count
+// is set (ApplyMappingEdit/AddSingle/AddBlock below), so a row can never
+// name a gesture the app does not have.
+std::size_t CountGestureReferencesAtOrAbove(const MidiControllerSlot& slot, std::size_t count) {
+    std::size_t total = 0;
+    if (slot.config.analogInput.has_value()) {
+        for (const AnalogMidiMapping& gesture : slot.config.analogInput->gestures) {
+            if (gesture.gestureIx >= count) {
+                ++total;
+            }
+        }
+    }
+    for (const MidiControllerSystemMessageAssociation& association : slot.config.systemMessages) {
+        const MessageIn& press = association.press;
+        const bool isGestureMessage = press.type == MessageIn::Type::SetGestureSelect ||
+                                      press.type == MessageIn::Type::ToggleGestureSelect ||
+                                      press.type == MessageIn::Type::SetGestureValue;
+        if (isGestureMessage && press.gestureIx >= count) {
+            ++total;
+        }
+    }
+    return total;
+}
+
 bool FlushSectionPresentationToSlot(const SectionPresentation& presentation, MidiControllerSlot& slot,
                                     MidiConfigSection section, std::string* reason) {
     switch (section) {
@@ -2746,6 +2773,17 @@ bool MidiConfigViewModel::ApplyMappingEdit(std::size_t controllerIx, MidiConfigS
 
     if (!FlushSectionPresentationToSlot(presentation, slot, section, reason)) {
         return false;
+    }
+
+    if (gestureCount_.has_value()) {
+        const std::size_t before = CountGestureReferencesAtOrAbove(instrument_.controllers[controllerIx], *gestureCount_);
+        const std::size_t after = CountGestureReferencesAtOrAbove(slot, *gestureCount_);
+        if (after > before) {
+            if (reason != nullptr) {
+                *reason = "gesture must be an integer 0-" + std::to_string(*gestureCount_ - 1);
+            }
+            return false;
+        }
     }
 
     out = std::move(scratch);
@@ -3501,6 +3539,19 @@ bool MidiConfigViewModel::AddSingle(std::size_t controllerIx, MidiConfigSection 
         presentation = rollback;
         return false;
     }
+
+    if (gestureCount_.has_value()) {
+        const std::size_t before = CountGestureReferencesAtOrAbove(instrument_.controllers[controllerIx], *gestureCount_);
+        const std::size_t after = CountGestureReferencesAtOrAbove(slot, *gestureCount_);
+        if (after > before) {
+            if (reason != nullptr) {
+                *reason = "gesture must be an integer 0-" + std::to_string(*gestureCount_ - 1);
+            }
+            presentation = rollback;
+            return false;
+        }
+    }
+
     out = std::move(scratch);
     return true;
 }
@@ -3705,6 +3756,19 @@ bool MidiConfigViewModel::AddBlock(std::size_t controllerIx, MidiConfigSection s
         presentation = rollback;
         return false;
     }
+
+    if (gestureCount_.has_value()) {
+        const std::size_t before = CountGestureReferencesAtOrAbove(instrument_.controllers[controllerIx], *gestureCount_);
+        const std::size_t after = CountGestureReferencesAtOrAbove(slot, *gestureCount_);
+        if (after > before) {
+            if (reason != nullptr) {
+                *reason = "gesture must be an integer 0-" + std::to_string(*gestureCount_ - 1);
+            }
+            presentation = rollback;
+            return false;
+        }
+    }
+
     out = std::move(scratch);
     return true;
 }

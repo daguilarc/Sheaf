@@ -979,6 +979,12 @@ struct ControllersPageCallbacks
     // host with an app catalog fills this from
     // MakeControllerWizardRegistry(engine.MidiCatalog()).
     std::vector<ControllerWizardDescriptor> layouts;
+    // The app's gesture count. Unset means no cap (MidiConfigViewModel's own
+    // default) -- a host with an app catalog fills this from
+    // engine.Manager().GestureCount(), so a Gestures row or a Hold/Toggle
+    // Gesture Select/Set Gesture Value argument can never name a gesture the
+    // app does not have.
+    std::optional<std::size_t> gestureCount;
 };
 
 struct ExistingWizardTarget {
@@ -1036,6 +1042,10 @@ public:
         if (!m_callbacks.layouts.empty())
         {
             m_vm.SetLayouts(m_callbacks.layouts);
+        }
+        if (m_callbacks.gestureCount.has_value())
+        {
+            m_vm.SetGestureCount(m_callbacks.gestureCount);
         }
         m_dirty = true;
     }
