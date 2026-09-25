@@ -2269,6 +2269,27 @@ TEST_CASE(engine_running_load_stashes_under_storage_shortfall_and_retries_whole_
     REQUIRE_TRUE(engine.IsStorageGrowPendingForTest());
     REQUIRE_TRUE(!engine.IsArenaGrowPendingForTest());
 
+    synth::ParameterGroup& group = engine.Manager().ParameterById(carrierId).Group();
+    const std::size_t watermark = group.StorageLowWatermark();
+    const std::size_t need = 8;  // two carriers x four depths each, matching the patch above
+
+    // Satisfy the raw storage need directly -- bypassing MessageThreadTick
+    // entirely -- so the barrier's own storageGrowPending_ read is the only
+    // thing standing between the stash and an early retry. If ProcessBlock
+    // retried as soon as arenaGrowPending_ alone cleared, ignoring
+    // storageGrowPending_, this block would find the room just added and
+    // apply the stashed Load here, before the tick that is supposed to gate
+    // the retry has ever run.
+    group.AddParameterStorageBatch(
+        synth::MakeParameterStorageBatch(group.Config(), group.GestureCount(), need + watermark));
+    {
+        synth::AudioBlock b = buffers.Block(256);
+        engine.ProcessBlock(b, 0);
+    }
+    REQUIRE_TRUE(engine.HasStashedPatchMessageForTest());
+    REQUIRE_TRUE(engine.IsStorageGrowPendingForTest());
+    REQUIRE_NEAR(engine.Manager().ParameterById(carrierId).SceneCenter(0), 0.5f, 1e-5f);  // still unapplied
+
     engine.MessageThreadTick();  // provisions the stashed needs, clears the flag
     REQUIRE_TRUE(!engine.IsStorageGrowPendingForTest());
     REQUIRE_TRUE(engine.HasStashedPatchMessageForTest());  // tick must not touch the stash
@@ -2282,9 +2303,6 @@ TEST_CASE(engine_running_load_stashes_under_storage_shortfall_and_retries_whole_
     // count consumed is derived from what the tick actually provisioned
     // (which includes any low-water top-up already queued from Init, not
     // only the shortfall's own need) rather than assumed.
-    synth::ParameterGroup& group = engine.Manager().ParameterById(carrierId).Group();
-    const std::size_t watermark = group.StorageLowWatermark();
-    const std::size_t need = 8;  // two carriers x four depths each, matching the patch above
     const std::size_t availableAfterTick = group.AvailableParameterSlots();
     REQUIRE_TRUE(availableAfterTick >= need + watermark);
     const std::size_t toConsume = availableAfterTick - (need + watermark) + 1;
