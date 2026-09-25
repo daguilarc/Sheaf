@@ -655,6 +655,8 @@ const char* PatchApplyStatusName(PatchApplyStatus status) {
         return "OutputQueueFull";
     case PatchApplyStatus::ArenaExhausted:
         return "ArenaExhausted";
+    case PatchApplyStatus::StorageShortfall:
+        return "StorageShortfall";
     }
     return "Unknown";
 }

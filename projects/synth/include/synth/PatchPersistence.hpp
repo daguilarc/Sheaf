@@ -214,6 +214,10 @@ enum class PatchApplyStatus {
     InvalidJSON,
     OutputQueueFull,
     ArenaExhausted,
+    // A LoadFromJSON whose depths would leave a group's available storage
+    // below that group's watermark. No value changed; the caller provisions
+    // the shortfall and retries the message.
+    StorageShortfall,
 };
 
 PatchApplyStatus ApplyPatchMessage(

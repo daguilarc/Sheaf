@@ -763,6 +763,13 @@ private:
     std::atomic<std::size_t> size_{0};
 };
 
+// A group and how many new depths a patch's values would need to create in
+// it, for ParameterManager::MissingDepthsForValuesJSON.
+struct DepthNeed {
+    ParameterGroup* group = nullptr;
+    std::size_t count = 0;
+};
+
 class ParameterManager {
 public:
     ParameterManager() = default;
@@ -827,6 +834,12 @@ public:
     const Parameter* FindParameterByName(std::string_view name) const;
     JSON ParameterValuesToJSON(JsonArena& arena) const;
     bool LoadParameterValuesFromJSON(JSON json);
+    // How many depths parameterValues names, at every level, that do not
+    // exist yet -- one DepthNeed per group that is short any, reached the
+    // same way LoadParameterValuesFromJSON reaches parameters. Creates
+    // nothing; a patch-apply site provisions storage from this count before
+    // it applies the same values.
+    std::vector<DepthNeed> MissingDepthsForValuesJSON(JSON parameterValues);
     std::size_t CollectNeutralLocalParameters();
     void ComputeAllParameters();
     // Control-rate target computation for the steady-state audio pump:

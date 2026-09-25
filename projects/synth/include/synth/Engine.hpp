@@ -262,6 +262,11 @@ public:
 
         app_.Init(&context_);
 
+        // Fixed-capacity storage-shortfall stash (see pendingStorageNeeds_'s
+        // doc comment): every group the app's Init() created exists now, so
+        // this is the one point sized once, before any patch can apply.
+        pendingStorageNeeds_.resize(manager_.NumGroups());
+
         // Snapshot the app's Init-configured live instrument/audio device as
         // the default BEFORE any startup patch applies, so DefaultInstrument()
         // and AppContext::defaultInstrument hand out the instrument the app's
@@ -373,24 +378,34 @@ public:
 
     // Audio-thread block pump (sar-6, binding order):
     //   1. patch-drain phase (drain barrier): if a message is stashed in
-    //      pendingPatchMessage_ AND arenaGrowPending_ is still set, the
-    //      arena has not been grown yet — skip draining patchInputBus_
-    //      entirely this block (never lose the stash, never reorder a
-    //      newer message ahead of it). If a message is stashed but
-    //      arenaGrowPending_ has been cleared (MessageThreadTick grew the
-    //      arena), retry the stashed message FIRST: on success clear the
+    //      pendingPatchMessage_ AND either arenaGrowPending_ or
+    //      storageGrowPending_ is still set, the barrier has not been
+    //      cleared yet — skip draining patchInputBus_ entirely this block
+    //      (never lose the stash, never reorder a newer message ahead of
+    //      it). If a message is stashed but both flags have cleared
+    //      (MessageThreadTick grew the arena and/or provisioned the
+    //      storage), retry the stashed message FIRST: on success clear the
     //      stash and fall through to draining patchInputBus_ normally; on
-    //      ArenaExhausted again, re-stash/re-set the flag and stop (skip
-    //      draining new messages this block too). Otherwise (no stash),
-    //      drain patchInputBus_ via ApplyPatchMessage using the engine
-    //      serialization context; Applied/Reverted patch messages change
-    //      synthesizer parameter values, and, when the app's catalog sets
-    //      patchCarriesMappings, a load's midiInstrument section is staged in
-    //      pendingPatchInstrument_ for MessageThreadTick to apply through
-    //      EditInstrument (see StashLoadedPatchInstrument). ArenaExhausted
-    //      stashes the popped message in pendingPatchMessage_, sets
-    //      arenaGrowPending_, and stops draining for this block (never grows
-    //      the arena on the audio path).
+    //      ArenaExhausted again, re-stash/re-set arenaGrowPending_ and stop
+    //      (skip draining new messages this block too); on StorageShortfall
+    //      again, re-stash under the storage reason (StashStorageNeeds)
+    //      and stop the same way — never the terminal branch below.
+    //      Otherwise (no stash), drain patchInputBus_ via ApplyPatchMessage
+    //      using the engine serialization context; Applied/Reverted patch
+    //      messages change synthesizer parameter values, and, when the
+    //      app's catalog sets patchCarriesMappings, a load's
+    //      midiInstrument section is staged in pendingPatchInstrument_ for
+    //      MessageThreadTick to apply through EditInstrument (see
+    //      StashLoadedPatchInstrument). ArenaExhausted stashes the popped
+    //      message in pendingPatchMessage_, sets arenaGrowPending_, and
+    //      stops draining for this block (never grows the arena on the
+    //      audio path). StorageShortfall stashes the popped message the
+    //      same way and writes its per-group needs plus sets
+    //      storageGrowPending_ instead (StashStorageNeeds), never growing
+    //      storage on the audio path either. A message applied to a
+    //      parameter while a stashed Load waits is overwritten by the
+    //      patch once it applies, exactly as one made in the block before
+    //      the Load is today.
     //   2. drain due UI messages, then due MIDI messages. Apply ordinary
     //      parameter/grid messages immediately; for an app that declares
     //      HasAppCommands, hand each AppCommand message to its
@@ -429,14 +444,16 @@ public:
         }
 
         if (pendingPatchMessage_.has_value()) {
-            if (arenaGrowPending_.load(std::memory_order_acquire)) {
-                // Barrier still up: MessageThreadTick has not grown the
-                // arena yet. Skip the entire patch-drain phase this block so
-                // no newer message can apply ahead of the stash and nothing
-                // overwrites it.
+            if (arenaGrowPending_.load(std::memory_order_acquire) ||
+                storageGrowPending_.load(std::memory_order_acquire)) {
+                // Barrier still up: MessageThreadTick has not cleared every
+                // reason yet. Skip the entire patch-drain phase this block
+                // so no newer message can apply ahead of the stash and
+                // nothing overwrites it.
             } else {
-                // Barrier cleared: the tick grew the arena. Retry the
-                // stashed message first, before draining anything new.
+                // Barrier cleared: the tick grew the arena and/or
+                // provisioned the storage. Retry the stashed message first,
+                // before draining anything new.
                 PatchMessageIn stashed = std::move(*pendingPatchMessage_);
                 pendingPatchMessage_.reset();
                 PatchApplyStatus retryStatus;
@@ -464,6 +481,9 @@ public:
                 } else if (retryStatus == PatchApplyStatus::ArenaExhausted) {
                     pendingPatchMessage_ = std::move(stashed);
                     arenaGrowPending_.store(true, std::memory_order_release);
+                } else if (retryStatus == PatchApplyStatus::StorageShortfall) {
+                    pendingPatchMessage_ = std::move(stashed);
+                    StashStorageNeeds(*pendingPatchMessage_);
                 } else {
                     // Serialized/InvalidJSON/OutputQueueFull are terminal for
                     // this message; continue draining any newer messages.
@@ -550,15 +570,21 @@ public:
     // Task 5: message-thread pump. Binding order:
     //   1. parameter storage-batch replies — drain parameterMessageOutBus_
     //      and reply to each ParameterStorageBatchNeeded request, mirroring
-    //      the miniapp's processParameterMessages pattern exactly.
-    //   2. arena grow (see the tick contract note on GrowSerializationArenaForTick):
-    //      MessageThreadTick grows the arena and clears arenaGrowPending_
-    //      ONLY (GrowSerializationArenaForTick clears the flag itself, in
-    //      both the ordinary-growth and drop-at-cap cases). It must NOT
-    //      touch pendingPatchMessage_ (except the documented drop-at-cap
-    //      carve-out) and must NOT re-push anything onto patchInputBus_ —
-    //      ProcessBlock alone owns retrying/clearing the stash, on the
-    //      audio thread, once it observes arenaGrowPending_ cleared.
+    //      the miniapp's processParameterMessages pattern exactly, through
+    //      the same ProvisionStorageNeed helper step 2's storage reason
+    //      calls below, so the provisioning line exists once.
+    //   2. grow: for the arena reason (see the tick contract note on
+    //      GrowSerializationArenaForTick), MessageThreadTick grows the arena
+    //      and clears arenaGrowPending_ ONLY (GrowSerializationArenaForTick
+    //      clears the flag itself, in both the ordinary-growth and
+    //      drop-at-cap cases); for the storage reason, it reads
+    //      storageGrowPending_ with acquire order, runs ProvisionStorageNeed
+    //      on every need written into pendingStorageNeeds_, and clears
+    //      storageGrowPending_ with release order after its last read of the
+    //      needs. Neither reason touches pendingPatchMessage_ or re-pushes
+    //      anything onto patchInputBus_ — ProcessBlock alone owns
+    //      retrying/clearing the stash, on the audio thread, once it
+    //      observes both flags cleared.
     //   3. patchManager_.ProcessResponses()
     //   4. each processor in every slot of midiProcessors_'s outputs: Process()
     //      (per-controller rebuild, Task 2: midiProcessors_ is now one
@@ -596,18 +622,18 @@ public:
                 parameterMessage.group == nullptr) {
                 continue;
             }
-            // slog-7: INFO-log storage-batch provisioning (group pointer +
-            // requested count) so a session log shows when/how often groups
-            // are reinforced with additional parameter storage.
-            INFO("MessageThreadTick: provisioning storage batch for group %p (requested=%zu)",
-                 static_cast<const void*>(parameterMessage.group), parameterMessage.requestedParameters);
-            parameterMessage.group->AddParameterStorageBatch(MakeParameterStorageBatch(
-                parameterMessage.group->Config(), parameterMessage.group->GestureCount(),
-                parameterMessage.requestedParameters));
+            ProvisionStorageNeed(*parameterMessage.group, parameterMessage.minimumAdditionalParameters);
         }
 
         if (arenaGrowPending_.load(std::memory_order_acquire)) {
             GrowSerializationArenaForTick();
+        }
+
+        if (storageGrowPending_.load(std::memory_order_acquire)) {
+            for (std::size_t ix = 0; ix < pendingStorageNeedCount_; ++ix) {
+                ProvisionStorageNeed(*pendingStorageNeeds_[ix].group, pendingStorageNeeds_[ix].count);
+            }
+            storageGrowPending_.store(false, std::memory_order_release);
         }
 
         const PatchCommandResult patchResult = patchManager_.ProcessResponses();
@@ -1013,14 +1039,16 @@ public:
     std::uint64_t SampleCount() const { return sampleCounter_.load(std::memory_order_relaxed); }
 
     // Test-only accessors for the ProcessBlock drain-barrier state
-    // (pendingPatchMessage_/arenaGrowPending_). PatchManager::HasPendingSave()
-    // is not a substitute: it reflects PatchManager's own dispatch-time
-    // bookkeeping (reset as soon as a new patch command is enqueued, e.g. by
-    // NewPatch()), not whether the engine's drain has actually
-    // applied the queued message yet. Exposed so tests can observe the
-    // barrier directly without depending on that unrelated bookkeeping.
+    // (pendingPatchMessage_/arenaGrowPending_/storageGrowPending_).
+    // PatchManager::HasPendingSave() is not a substitute: it reflects
+    // PatchManager's own dispatch-time bookkeeping (reset as soon as a new
+    // patch command is enqueued, e.g. by NewPatch()), not whether the
+    // engine's drain has actually applied the queued message yet. Exposed
+    // so tests can observe the barrier directly without depending on that
+    // unrelated bookkeeping.
     bool HasStashedPatchMessageForTest() const { return pendingPatchMessage_.has_value(); }
     bool IsArenaGrowPendingForTest() const { return arenaGrowPending_.load(std::memory_order_acquire); }
+    bool IsStorageGrowPendingForTest() const { return storageGrowPending_.load(std::memory_order_acquire); }
 
     // Test-only accessors/hooks for the ui-state-before-audio claim machine
     // (design's "Mechanism" section, pinned): a single-slot lock-free CAS
@@ -1350,7 +1378,10 @@ private:
     // ArenaExhausted stashes the popped message in pendingPatchMessage_, sets
     // arenaGrowPending_, and stops draining for this block (never grows the
     // arena on the audio path — see the ArenaExhausted handling note above
-    // ApplyPendingPatchMessages).
+    // ApplyPendingPatchMessages). StorageShortfall stashes the popped
+    // message the same way and writes its per-group needs plus sets
+    // storageGrowPending_ instead (StashStorageNeeds), never provisioning
+    // storage on the audio path either.
     //
     // audioDeviceStateMutex_ is acquired ONLY inside the loop body, after a
     // message has actually been popped -- never around the
@@ -1378,6 +1409,11 @@ private:
             if (status == PatchApplyStatus::ArenaExhausted) {
                 pendingPatchMessage_ = std::move(patchMessage);
                 arenaGrowPending_.store(true, std::memory_order_release);
+                break;
+            }
+            if (status == PatchApplyStatus::StorageShortfall) {
+                pendingPatchMessage_ = std::move(patchMessage);
+                StashStorageNeeds(*pendingPatchMessage_);
                 break;
             }
         }
@@ -1424,6 +1460,44 @@ private:
         arenaGrowPending_.store(false, std::memory_order_release);
     }
 
+    // The storage provisioning, written once: adds a batch sized need plus
+    // the group's own low watermark, so available storage is back above one
+    // press's worth before the caller's next block or tick. Calls
+    // AddParameterStorageBatch directly rather than going through
+    // ParameterManager::RequestParameterStorageBatch, so a group's own
+    // already-pending low-water request (for a possibly smaller amount)
+    // cannot absorb this provisioning instead of it happening.
+    void ProvisionStorageNeed(ParameterGroup& group, std::size_t need) {
+        const std::size_t amount = need + group.StorageLowWatermark();
+        // slog-7: INFO-log storage-batch provisioning (group pointer +
+        // amount) so a session log shows when/how often groups are
+        // reinforced with additional parameter storage.
+        INFO("provisioning storage batch for group %p (amount=%zu)", static_cast<const void*>(&group), amount);
+        group.AddParameterStorageBatch(MakeParameterStorageBatch(group.Config(), group.GestureCount(), amount));
+    }
+
+    // Audio thread, only while no storage stash is already pending (the
+    // barrier holds pendingPatchMessage_ while storageGrowPending_ is set,
+    // so this never runs while a previous storage stash's needs are still
+    // unread). Writes each group's need into the fixed-capacity
+    // pendingStorageNeeds_ (sized to the manager's group count at
+    // Initialize(), so this never allocates) and raises
+    // storageGrowPending_ with release order, mirroring arenaGrowPending_'s
+    // barrier role but for the storage reason. `message`'s own JSON is
+    // re-read rather than threaded through from the caller's earlier
+    // StorageShortfallNeeds check, since the two calls are rare (a real
+    // shortfall) and keeping this call self-contained matters more than
+    // saving one walk of the JSON.
+    void StashStorageNeeds(const PatchMessageIn& message) {
+        const JSON parameterValues = message.document.root.Get("parameterValues");
+        const std::vector<DepthNeed> needs = manager_.MissingDepthsForValuesJSON(parameterValues);
+        pendingStorageNeedCount_ = std::min(needs.size(), pendingStorageNeeds_.size());
+        for (std::size_t ix = 0; ix < pendingStorageNeedCount_; ++ix) {
+            pendingStorageNeeds_[ix] = needs[ix];
+        }
+        storageGrowPending_.store(true, std::memory_order_release);
+    }
+
     // Pre-audio-only synchronous drain, used by Initialize(). Drains
     // patchInputBus_ via ApplyPatchMessage using the engine's serialization
     // context. Applying/reverting here changes parameter values, and, when
@@ -1447,20 +1521,55 @@ private:
     // Initialize() runs pre-audio, single-threaded). The lock is uncontended
     // in that window; held anyway for uniformity with every other touch point
     // of audioDeviceState_.
-    // Every patch-message apply in this class goes through here, so the revert
-    // hook cannot be wired at three of the four call sites and missed at the
-    // fourth. Forwards verbatim and adds exactly one thing: an app that
-    // declares HasRestoreStartupState is told when a revert has just rebuilt the
-    // parameter manager from registered defaults, which is the point at which
-    // any startup state the app established itself has been discarded.
+    // The per-group needs a LoadFromJSON message's depths would leave short
+    // of that group's watermark; empty for every other message type, or when
+    // nothing is short. No value is touched by computing this: it is a
+    // read-only check ApplyPatchMessageAndNotifyApp runs before anything
+    // applies, and StashStorageNeeds runs again, independently, once a
+    // shortfall is confirmed and the message is being stashed.
+    static std::vector<DepthNeed> StorageShortfallNeeds(const PatchMessageIn& message, ParameterManager& manager) {
+        if (message.type != PatchMessageIn::Type::LoadFromJSON || message.document.root.IsNull()) {
+            return {};
+        }
+        const JSON parameterValues = message.document.root.Get("parameterValues");
+        std::vector<DepthNeed> needs = manager.MissingDepthsForValuesJSON(parameterValues);
+        needs.erase(std::remove_if(needs.begin(), needs.end(),
+                                   [](const DepthNeed& need) {
+                                       return need.group->AvailableParameterSlots() >=
+                                              need.count + need.group->StorageLowWatermark();
+                                   }),
+                   needs.end());
+        return needs;
+    }
+
+    // Every patch-message apply in this class goes through here, so the
+    // revert hook cannot be wired at three of the four call sites and missed
+    // at the fourth. Forwards verbatim to ApplyPatchMessage and adds two
+    // things: a LoadFromJSON whose depths would leave a group's available
+    // storage below that group's watermark is refused up front, before
+    // anything is touched, and reported as a storage-shortfall status
+    // (mirroring the arena's own exhaustion status) rather than applied
+    // short; and an app that declares HasRestoreStartupState is told when a
+    // revert has just rebuilt the parameter manager from registered
+    // defaults, which is the point at which any startup state the app
+    // established itself has been discarded.
     //
     // Called on whichever thread applied the message -- the pre-audio drain
     // during Initialize(), or ProcessBlock's own drain. Apps implementing the
     // hook are subject to the same audio-thread constraints as the drain
     // itself.
-    template <typename... Args>
-    PatchApplyStatus ApplyPatchMessageAndNotifyApp(Args&&... args) {
-        const PatchApplyStatus status = ApplyPatchMessage(std::forward<Args>(args)...);
+    PatchApplyStatus ApplyPatchMessageAndNotifyApp(
+        const PatchMessageIn& message, ParameterManager& manager,
+        MidiInstrumentConfig& instrument, const MidiInstrumentConfig& defaultInstrument,
+        AudioDeviceState& audioDevice, const AudioDeviceState& defaultAudioDevice,
+        MessageOutBus& outputBus, PatchSerializationContext context, bool carryInstrument,
+        std::optional<MidiInstrumentConfig>* loadedInstrument) {
+        if (!StorageShortfallNeeds(message, manager).empty()) {
+            return PatchApplyStatus::StorageShortfall;
+        }
+        const PatchApplyStatus status =
+            ApplyPatchMessage(message, manager, instrument, defaultInstrument, audioDevice, defaultAudioDevice,
+                              outputBus, context, carryInstrument, loadedInstrument);
         if constexpr (HasRestoreStartupState<App>) {
             if (status == PatchApplyStatus::Reverted) {
                 app_.RestoreStartupState();
@@ -1508,6 +1617,18 @@ private:
                     // Pre-audio only: growing here is safe because the audio
                     // thread has not started running ProcessBlock yet.
                     serializationArena_.GrowAndReset();
+                    status = ApplyPatchMessageAndNotifyApp(message, manager_, instrumentConfig_, defaultInstrumentConfig_,
+                                               audioDeviceState_, defaultAudioDeviceState_, patchOutputBus_,
+                                               serializationContext_, midiCatalog_.patchCarriesMappings,
+                                               wantInstrument ? &loadedInstrument : nullptr);
+                } else if (status == PatchApplyStatus::StorageShortfall) {
+                    // Pre-audio only: the calling thread may provision
+                    // directly here (heap allocation is safe) and no audio
+                    // thread reads the group's storage yet, so the message
+                    // retries at once, as the arena case does.
+                    for (const DepthNeed& need : StorageShortfallNeeds(message, manager_)) {
+                        ProvisionStorageNeed(*need.group, need.count);
+                    }
                     status = ApplyPatchMessageAndNotifyApp(message, manager_, instrumentConfig_, defaultInstrumentConfig_,
                                                audioDeviceState_, defaultAudioDeviceState_, patchOutputBus_,
                                                serializationContext_, midiCatalog_.patchCarriesMappings,
@@ -1687,25 +1808,41 @@ private:
     int uiPublishInterval_ = 1;
     int blocksSinceUiPublish_ = 0;
 
-    // Audio-path ArenaExhausted handling / drain barrier (Task 4/5):
-    // ProcessBlock never grows serializationArena_ on the audio thread. On
-    // ArenaExhausted it stashes the popped message here and sets
-    // arenaGrowPending_, which bars the ENTIRE patch-drain phase (not just
-    // growth) for subsequent blocks: while pendingPatchMessage_ holds a
-    // value, ProcessBlock does not pop any further messages from
-    // patchInputBus_, preventing a second exhaustion from clobbering the
-    // stash and preventing newer messages from applying out of order ahead
-    // of it. ProcessBlock retries the stash itself, first, as soon as
-    // arenaGrowPending_ reads false.
+    // Audio-path ArenaExhausted/StorageShortfall handling / drain barrier
+    // (Task 4/5): ProcessBlock never grows serializationArena_ or
+    // provisions storage on the audio thread. On ArenaExhausted it stashes
+    // the popped message here and sets arenaGrowPending_; on
+    // StorageShortfall it stashes the message the same way, writes the
+    // per-group needs into pendingStorageNeeds_, and sets
+    // storageGrowPending_ instead. Either flag bars the ENTIRE patch-drain
+    // phase (not just growth/provisioning) for subsequent blocks: while
+    // pendingPatchMessage_ holds a value, ProcessBlock does not pop any
+    // further messages from patchInputBus_, preventing a second
+    // exhaustion/shortfall from clobbering the stash and preventing newer
+    // messages from applying out of order ahead of it. ProcessBlock retries
+    // the stash itself, first, as soon as both flags read false. A retry
+    // that reports the storage shortfall again re-stashes under the
+    // storage reason (StashStorageNeeds), never the terminal branch.
     //
     // Tick contract: MessageThreadTick grows the arena and clears
-    // arenaGrowPending_; it must NOT touch pendingPatchMessage_, except the
-    // documented drop-at-cap carve-out in GrowSerializationArenaForTick
-    // (arena already at serializationContext_.maxArenaCapacity: the stash
-    // is dropped there instead of retried forever). Outside that one case,
-    // only ProcessBlock (audio thread) reads, retries, or clears the stash.
+    // arenaGrowPending_, and separately provisions every need in
+    // pendingStorageNeeds_ and clears storageGrowPending_ with release
+    // order after its last read of the needs; it must NOT touch
+    // pendingPatchMessage_, except the documented drop-at-cap carve-out in
+    // GrowSerializationArenaForTick (arena already at
+    // serializationContext_.maxArenaCapacity: the stash is dropped there
+    // instead of retried forever). Outside that one case, only ProcessBlock
+    // (audio thread) reads, retries, or clears the stash.
     std::optional<PatchMessageIn> pendingPatchMessage_;
     std::atomic<bool> arenaGrowPending_{false};
+    // Fixed-capacity: resized to manager_.NumGroups() once in Initialize()
+    // and never again, so StashStorageNeeds (audio thread) never allocates.
+    // Written only while no storage stash is pending (see
+    // pendingPatchMessage_'s doc comment); read only by MessageThreadTick,
+    // under storageGrowPending_'s acquire/release pair.
+    std::vector<DepthNeed> pendingStorageNeeds_;
+    std::size_t pendingStorageNeedCount_ = 0;
+    std::atomic<bool> storageGrowPending_{false};
 
     // ui-state-before-audio (design's "Mechanism" section, PINNED — do not
     // substitute a different synchronization shape): a single-slot

@@ -271,6 +271,38 @@ struct AppCommandTestApp {
     void ProcessBlock(synth::AudioBlock&) {}
 };
 
+// A tiny group (four modulators, room for one live parameter beyond the
+// carrier) so a patch naming every depth for the carrier leaves the group's
+// available storage below its watermark (numModulators * 2 = 8) at both the
+// startup and the running site.
+struct StorageShortfallTestApp {
+    static inline float processLiteAlpha = 1.0f;
+    synth::AppContext* context = nullptr;
+    synth::ParameterId carrierId = 0;
+
+    static synth::RuntimeConfig Config() {
+        synth::RuntimeConfig config;
+        config.appName = "StorageShortfallTest";
+        config.numAudioOutputs = 2;
+        return config;
+    }
+    void Init(synth::AppContext* ctx) {
+        context = ctx;
+        auto& group = ctx->parameterManager->CreateGroup({.numVoices = 1,
+                                                           .numModulators = 4,
+                                                           .numScenes = 1,
+                                                           .maxParameters = 8,
+                                                           .processLiteAlpha = processLiteAlpha,
+                                                           .targetCenterAlpha = 1.0f});
+        for (synth::ModulatorMetadata& metadata : group.GetModulators().Metadata()) {
+            metadata.connected = true;
+        }
+        auto& carrier = ctx->parameterManager->CreateParameter(group, {.name = "Carrier", .defaultValue = 0.5f});
+        carrierId = carrier.Id();
+    }
+    void ProcessBlock(synth::AudioBlock&) {}
+};
+
 class InitTopologyCell final : public synth::Cell {
 public:
     void OnPress(std::uint8_t) override {}
@@ -346,6 +378,45 @@ void WriteProbePatchVersion(const std::filesystem::path& patchDir, float probeVa
     if (!audioDevice.outputDeviceName.empty() || !audioDevice.inputDeviceName.empty()) {
         root.SetNew("audioDevice", synth::ToJSON(arena, audioDevice));
     }
+    REQUIRE_TRUE(!root.IsNull());
+    char* dumped = root.Dumps(JSON_ENCODE_ANY);
+    REQUIRE_TRUE(dumped != nullptr);
+    const std::string jsonText(dumped);
+    std::free(dumped);
+
+    synth::SavePatchVersionInDirectory(patchDir, jsonText, when);
+}
+
+// Builds a patch JSON document naming every depth for a single carrier on a
+// four-modulator group (matching StorageShortfallTestApp's topology), with
+// the carrier at carrierValue, and writes it as a version file in patchDir.
+// A group that starts this patch fresh (maxParameters big enough to hold the
+// carrier plus all four depths) supplies the JSON; a tiny group applying it
+// later is expected to fall short of its watermark.
+void WriteDeepModDepthsPatchVersion(const std::filesystem::path& patchDir, float carrierValue,
+                                    std::chrono::system_clock::time_point when) {
+    synth::ParameterManager scratchManager;
+    auto& group = scratchManager.CreateGroup(
+        {.numVoices = 1, .numModulators = 4, .numScenes = 1, .maxParameters = 8});
+    for (synth::ModulatorMetadata& metadata : group.GetModulators().Metadata()) {
+        metadata.connected = true;
+    }
+    auto& carrier = scratchManager.CreateParameter(group, {.name = "Carrier", .defaultValue = 0.5f});
+    carrier.SceneCenter(0) = carrierValue;
+    for (std::size_t modIx = 0; modIx < 4; ++modIx) {
+        synth::Parameter* depth = carrier.EnsureModulationDepth(modIx);
+        REQUIRE_TRUE(depth != nullptr);
+        // A depth at its own default (neutral, zero) is never written to
+        // patch JSON (Parameter::ToValueJSON skips a HasNonDefaultState()
+        // depth entirely), so BuildPatchJSON would name none of the four
+        // depths below and the shortfall this test drives would never fire.
+        depth->SceneCenter(0) = 0.7f + 0.05f * static_cast<float>(modIx);  // away from the depth's own 0.5f neutral default
+    }
+    scratchManager.CaptureDefaultControlState();
+    scratchManager.ComputeAllParameters();
+
+    synth::JsonArena arena(64 * 1024);
+    synth::JSON root = synth::BuildPatchJSON(arena, "Deep Patch", scratchManager, synth::MidiInstrumentConfig{});
     REQUIRE_TRUE(!root.IsNull());
     char* dumped = root.Dumps(JSON_ENCODE_ANY);
     REQUIRE_TRUE(dumped != nullptr);
@@ -2055,6 +2126,99 @@ TEST_CASE(engine_tick_grows_arena_and_retries_stashed_patch_message) {
     REQUIRE_TRUE(std::filesystem::exists(*latestVersion));
 
     std::filesystem::remove_all(saveDir);
+}
+
+TEST_CASE(engine_initialize_opens_a_startup_patch_whole_despite_a_storage_shortfall) {
+    const std::filesystem::path dataRoot =
+        std::filesystem::temp_directory_path() / "engine-initialize-storage-shortfall-data-root";
+    std::filesystem::remove_all(dataRoot);
+    const synth::RuntimeDataPaths paths = synth::RuntimeDataPaths::FromDataRoot(dataRoot);
+    std::filesystem::create_directories(paths.patchesRoot);
+    // The tiny group (StorageShortfallTestApp) starts with 8 - 1 = 7 slots
+    // available after the carrier registers; the patch names 4 depths, and
+    // the default watermark is 8, so 7 < 4 + 8 fires the shortfall at
+    // startup (before Initialize() has finished, so before any block).
+    WriteDeepModDepthsPatchVersion(paths.patchesRoot / "AAA", 0.9f, std::chrono::system_clock::now());
+
+    StorageShortfallTestApp::processLiteAlpha = 1.0f;
+    synth::Engine<StorageShortfallTestApp> engine([] { return std::uint64_t{0}; });
+    engine.SetRuntimeDataPaths(paths);
+    engine.Initialize();
+
+    const synth::ParameterId carrierId = engine.Application().carrierId;
+    REQUIRE_NEAR(engine.Manager().ParameterById(carrierId).SceneCenter(0), 0.9f, 1e-5f);
+    for (std::size_t modIx = 0; modIx < 4; ++modIx) {
+        REQUIRE_TRUE(engine.Manager().ParameterById(carrierId).ModulationDepthParameter(modIx) != nullptr);
+    }
+
+    std::filesystem::remove_all(dataRoot);
+}
+
+TEST_CASE(engine_running_load_stashes_under_storage_shortfall_and_retries_whole_after_the_tick_provisions) {
+    StorageShortfallTestApp::processLiteAlpha = 1.0f;
+    synth::Engine<StorageShortfallTestApp> engine([] { return std::uint64_t{0}; });
+    engine.Initialize();
+    engine.Prepare(48000.0, 256);
+
+    const synth::ParameterId carrierId = engine.Application().carrierId;
+    REQUIRE_NEAR(engine.Manager().ParameterById(carrierId).SceneCenter(0), 0.5f, 1e-5f);
+
+    // Same shape as StorageShortfallTestApp's own group, built fresh with
+    // enough room to name every depth for the carrier at a different value,
+    // so "unchanged" and "whole after the retry" are both observable.
+    synth::ParameterManager scratchManager;
+    auto& scratchGroup = scratchManager.CreateGroup(
+        {.numVoices = 1, .numModulators = 4, .numScenes = 1, .maxParameters = 8});
+    for (synth::ModulatorMetadata& metadata : scratchGroup.GetModulators().Metadata()) {
+        metadata.connected = true;
+    }
+    auto& scratchCarrier = scratchManager.CreateParameter(scratchGroup, {.name = "Carrier", .defaultValue = 0.5f});
+    scratchCarrier.SceneCenter(0) = 0.9f;
+    for (std::size_t modIx = 0; modIx < 4; ++modIx) {
+        synth::Parameter* depth = scratchCarrier.EnsureModulationDepth(modIx);
+        REQUIRE_TRUE(depth != nullptr);
+        // See WriteDeepModDepthsPatchVersion's matching comment: a depth
+        // left at its own default is never written to patch JSON.
+        depth->SceneCenter(0) = 0.7f + 0.05f * static_cast<float>(modIx);  // away from the depth's own 0.5f neutral default
+    }
+    scratchManager.CaptureDefaultControlState();
+    scratchManager.ComputeAllParameters();
+
+    auto arena = std::make_shared<synth::JsonArena>(64 * 1024);
+    synth::JSON root = synth::BuildPatchJSON(*arena, "Deep Patch", scratchManager, synth::MidiInstrumentConfig{});
+    REQUIRE_TRUE(!root.IsNull());
+    REQUIRE_TRUE(engine.Context().patchInputBus->Push(
+        synth::PatchMessageIn::LoadFromJSON(synth::JsonDocument{.arena = arena, .root = root})));
+
+    // Production cadence: one message tick per six blocks, never per block,
+    // so an early retry (which would apply before the tick has provisioned
+    // anything) cannot hide behind a rig that ticks every block.
+    TestBlockBuffers buffers(2, 256);
+    for (int block = 0; block < 6; ++block) {
+        synth::AudioBlock b = buffers.Block(256);
+        engine.ProcessBlock(b, 0);
+        // The running patch is untouched across every block before the
+        // provisioning tick: still the launch value, not the loaded one.
+        REQUIRE_NEAR(engine.Manager().ParameterById(carrierId).SceneCenter(0), 0.5f, 1e-5f);
+    }
+    REQUIRE_TRUE(engine.HasStashedPatchMessageForTest());
+    REQUIRE_TRUE(engine.IsStorageGrowPendingForTest());
+    REQUIRE_TRUE(!engine.IsArenaGrowPendingForTest());
+
+    engine.MessageThreadTick();  // provisions the stashed needs, clears the flag
+    REQUIRE_TRUE(!engine.IsStorageGrowPendingForTest());
+    REQUIRE_TRUE(engine.HasStashedPatchMessageForTest());  // tick must not touch the stash
+
+    {
+        // First block after the clear retries the stash.
+        synth::AudioBlock b = buffers.Block(256);
+        engine.ProcessBlock(b, 0);
+    }
+    REQUIRE_TRUE(!engine.HasStashedPatchMessageForTest());
+    REQUIRE_NEAR(engine.Manager().ParameterById(carrierId).SceneCenter(0), 0.9f, 1e-4f);
+    for (std::size_t modIx = 0; modIx < 4; ++modIx) {
+        REQUIRE_TRUE(engine.Manager().ParameterById(carrierId).ModulationDepthParameter(modIx) != nullptr);
+    }
 }
 
 TEST_CASE(engine_logs_patch_apply_and_storage_batch_activity_for_slog_7) {
