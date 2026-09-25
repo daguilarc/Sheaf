@@ -63,9 +63,10 @@ int BlockEndFromLast(int start, int last, bool mayRunDownward) {
 namespace {
 
 // MessageIn::Type's declaration order (ParamIncDec .. HoldDrill, Shift,
-// SceneBlendIncDec, 27 kinds) IS the type ordering component of
-// SystemMessageSortKey -- static_cast the enum directly rather than
-// maintaining a parallel table that could drift.
+// SceneBlendIncDec, TempoBpmIncDec, SetTempoBpmNormalized, AppCommand, 30
+// kinds) IS the type ordering component of SystemMessageSortKey --
+// static_cast the enum directly rather than maintaining a parallel table
+// that could drift.
 int TypeOrder(MessageIn::Type type) {
     return static_cast<int>(type);
 }
@@ -158,6 +159,12 @@ SystemMessageSortKey ComputeSystemMessageSortKey(const MidiControllerSystemMessa
             break;
         case MessageIn::Type::AppAction:
             key.arg1 = message.appActionIx;
+            break;
+        case MessageIn::Type::AppCommand:
+            // Classified with AppAction: no controller profile can produce
+            // one (UISystemMessageForAssociation never maps a press to it),
+            // so this arm is unreached by any real association.
+            key.arg1 = message.command;
             break;
         case MessageIn::Type::HoldDrill:
             key.hasBoolValue = message.hasBoolValue;

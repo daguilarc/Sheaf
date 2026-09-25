@@ -230,6 +230,10 @@ const char* MessageTypeName(MessageIn::Type type) {
     case MessageIn::Type::SelectGrid:
         return "selectGrid";
     case MessageIn::Type::AppAction:
+    // Classified with AppAction: ParseMessageType below has no "appCommand"
+    // string, so a profile that reads this name back always becomes
+    // AppAction, never AppCommand -- no controller profile can name it.
+    case MessageIn::Type::AppCommand:
         return "appAction";
     case MessageIn::Type::HoldDrill:
         return "holdDrill";
@@ -1910,6 +1914,7 @@ SystemMessageOutputState SystemMessageOutputInfo::Evaluate(const MessageIn& mess
     case MessageIn::Type::SetSceneBlend:
     case MessageIn::Type::SelectGrid:
     case MessageIn::Type::AppAction:
+    case MessageIn::Type::AppCommand:
     case MessageIn::Type::HoldDrill:
     case MessageIn::Type::Shift:
     case MessageIn::Type::SceneBlendIncDec:
@@ -2466,8 +2471,11 @@ JSON ToJSON(JsonArena& arena, const MessageIn& value) {
         json.SetNew("grid", arena.Integer(static_cast<int64_t>(value.gridIx)));
         return json;
     case MessageIn::Type::AppAction:
-        // appActionIx is not persisted -- an app's action list can reorder
-        // between runs, so only the type name round-trips.
+    // Classified with AppAction: no controller profile can name AppCommand
+    // (see MessageTypeName), so this arm is unreached by any real
+    // association; appActionIx is not persisted -- an app's action list can
+    // reorder between runs, so only the type name round-trips.
+    case MessageIn::Type::AppCommand:
         return json;
     case MessageIn::Type::ParamIncDec:
     case MessageIn::Type::ParamSetAbsolute:
@@ -2542,7 +2550,10 @@ bool FromJSON(JSON json, MessageIn& value) {
         value = parsed;
         return true;
     case MessageIn::Type::AppAction:
-        // appActionIx round-trips as 0 -- ToJSON never wrote it.
+    // ParseMessageType never produces AppCommand (no controller profile can
+    // name it), so this arm is unreached; appActionIx round-trips as 0 --
+    // ToJSON never wrote it.
+    case MessageIn::Type::AppCommand:
         value = parsed;
         return true;
     case MessageIn::Type::ParamIncDec:

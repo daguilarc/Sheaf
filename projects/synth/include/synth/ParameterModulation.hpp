@@ -984,6 +984,16 @@ struct MessageIn {
         // its ordinal.
         TempoBpmIncDec,
         SetTempoBpmNormalized,
+        // Appended after SetTempoBpmNormalized, the last enumerator, so every
+        // existing enumerator keeps its ordinal. Carries an app-defined
+        // command number (a namespace of its own, separate from appActionIx)
+        // and a value; Sheaf never interprets either. Produced only by an
+        // app's own surface, after it has already decided what to do, and
+        // applied on the audio thread by that app's own ApplyAppCommand hook
+        // (AppConcepts.hpp's HasAppCommands) -- unlike AppAction, which Sheaf
+        // forwards to the message thread for the app's PortableSurface to
+        // dispatch.
+        AppCommand,
     };
 
     std::uint64_t timestamp = 0;
@@ -996,6 +1006,10 @@ struct MessageIn {
     std::size_t bankIx = 0;
     std::size_t sceneIx = 0;
     std::size_t appActionIx = 0;
+    // The app-defined command number an AppCommand message carries; unused
+    // by every other type. A field of its own beside appActionIx since the
+    // two are different namespaces (see AppCommand's declaration above).
+    std::size_t command = 0;
     std::uint64_t absoluteEpoch = 0;
     float value = 0.0f;
     float delta = 0.0f;
@@ -1054,6 +1068,7 @@ struct MessageIn {
     static MessageIn SceneBlendIncDec(std::uint64_t timestamp, float delta);
     static MessageIn TempoBpmIncDec(std::uint64_t timestamp, float deltaBpm);
     static MessageIn SetTempoBpmNormalized(std::uint64_t timestamp, float normalized);
+    static MessageIn AppCommand(std::uint64_t timestamp, std::size_t command, float value);
 };
 
 class MessageInBus {

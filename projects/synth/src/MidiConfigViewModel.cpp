@@ -47,6 +47,7 @@ std::optional<std::size_t> PrimaryMessageArg(const MessageIn& message) {
         case MessageIn::Type::SelectGrid:
         case MessageIn::Type::ParamSetAbsoluteOnBank:
         case MessageIn::Type::AppAction:
+        case MessageIn::Type::AppCommand:
         case MessageIn::Type::HoldDrill:
         case MessageIn::Type::Shift:
         case MessageIn::Type::SceneBlendIncDec:
@@ -93,6 +94,7 @@ bool SetPrimaryMessageArg(MessageIn& message, std::size_t arg) {
         case MessageIn::Type::SelectGrid:
         case MessageIn::Type::ParamSetAbsoluteOnBank:
         case MessageIn::Type::AppAction:
+        case MessageIn::Type::AppCommand:
         case MessageIn::Type::HoldDrill:
         case MessageIn::Type::Shift:
         case MessageIn::Type::SceneBlendIncDec:
@@ -201,6 +203,10 @@ UISystemMessage UISystemMessageForAssociation(const MidiControllerSystemMessageA
         case MessageIn::Type::SceneBlendIncDec:
         case MessageIn::Type::TempoBpmIncDec:
         case MessageIn::Type::SetTempoBpmNormalized:
+        // No controller profile can name AppCommand: it joins the same
+        // fallback as the other message kinds no profile association ever
+        // carries, rather than gaining a UISystemMessage entry of its own.
+        case MessageIn::Type::AppCommand:
             return UISystemMessage::Clock;
     }
     return UISystemMessage::Clock;
@@ -789,6 +795,9 @@ std::string DescribeMessage(const MessageIn& message) {
             break;
         case MessageIn::Type::AppAction:
             oss << "app action " << message.appActionIx;
+            break;
+        case MessageIn::Type::AppCommand:
+            oss << "app command " << message.command << " value " << message.value;
             break;
         case MessageIn::Type::HoldDrill:
             oss << (message.boolValue ? "hold drill on" : "hold drill off");

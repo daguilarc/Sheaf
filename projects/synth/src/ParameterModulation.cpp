@@ -4077,6 +4077,15 @@ MessageIn MessageIn::SetTempoBpmNormalized(std::uint64_t timestamp, float normal
     return message;
 }
 
+MessageIn MessageIn::AppCommand(std::uint64_t timestamp, std::size_t command, float value) {
+    MessageIn message;
+    message.timestamp = timestamp;
+    message.type = Type::AppCommand;
+    message.command = command;
+    message.value = value;
+    return message;
+}
+
 MessageInBus::MessageInBus(ParameterManager* manager, std::size_t capacity)
     : manager_(manager),
       queue_(capacity == 0 ? 1 : capacity) {}
@@ -4262,6 +4271,12 @@ void MessageInBus::Apply(const MessageIn& message) {
         break;
     case MessageIn::Type::Shift:
         // Consumed by the MIDI processors before it reaches this bus.
+        break;
+    case MessageIn::Type::AppCommand:
+        // Dropped here: only an app's own surface produces one, and
+        // Engine::DrainMessageBus hands it to the app's ApplyAppCommand hook
+        // before it ever reaches this bus's own Apply. An app without the
+        // hook has no consumer, so it is dropped rather than misapplied.
         break;
     }
 }

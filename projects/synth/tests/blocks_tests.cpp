@@ -149,6 +149,8 @@ bool MessageInFullyEquivalent(const MessageIn& a, const MessageIn& b) {
             return a.gridSlotIx == b.gridSlotIx && a.gridIx == b.gridIx;
         case MessageIn::Type::AppAction:
             return a.appActionIx == b.appActionIx && a.value == b.value;
+        case MessageIn::Type::AppCommand:
+            return a.command == b.command && a.value == b.value;
         case MessageIn::Type::HoldDrill:
             return a.hasBoolValue == b.hasBoolValue && (!a.hasBoolValue || a.boolValue == b.boolValue);
         case MessageIn::Type::Shift:
@@ -264,6 +266,24 @@ TEST_CASE(SortKeyOrdersByMessageTypeDeclarationOrder) {
     // SelectParamBank (8) precedes SceneSelect (13) in MessageIn::Type's
     // declaration order.
     REQUIRE_TRUE(bankKey < sceneKey);
+}
+
+TEST_CASE(SortKeyOrdersAppCommandAfterSetTempoBpmNormalized) {
+    MidiControllerSystemMessageAssociation tempoAssoc;
+    tempoAssoc.control = MidiControlAddress{.channel = 0, .cc = 0};
+    tempoAssoc.press = MessageIn::SetTempoBpmNormalized(0, 0.5f);
+    tempoAssoc.feedback = tempoAssoc.press;
+
+    MidiControllerSystemMessageAssociation commandAssoc;
+    commandAssoc.control = MidiControlAddress{.channel = 0, .cc = 0};
+    commandAssoc.press = MessageIn::AppCommand(0, 3, 0.5f);
+    commandAssoc.feedback = commandAssoc.press;
+
+    const auto tempoKey = ComputeSystemMessageSortKey(tempoAssoc, MidiProfileKind::Generic);
+    const auto commandKey = ComputeSystemMessageSortKey(commandAssoc, MidiProfileKind::Generic);
+    // AppCommand is appended after SetTempoBpmNormalized, the last
+    // enumerator, so every existing enumerator keeps its ordinal.
+    REQUIRE_TRUE(tempoKey < commandKey);
 }
 
 TEST_CASE(SortKeyIncludesAbsolutePayloadAddressAdjacentToRelativeTurns) {
