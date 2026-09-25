@@ -9233,33 +9233,6 @@ TEST_CASE(message_bus_single_producer_single_consumer_threaded_order) {
     REQUIRE_TRUE(bus.Size() == 0);
 }
 
-TEST_CASE(clear_gesture_active_flags_for_active_scene_selection) {
-    synth::ParameterManager manager;
-    manager.SetGestureCount(2);
-    manager.Scene() = {.leftScene = 0, .rightScene = 1, .blend = 0.5f};
-    auto& group = manager.CreateGroup({
-        .numVoices = 1,
-        .numScenes = 3,
-        .maxParameters = 1,
-    });
-    auto& first = manager.CreateParameter(group, {.name = "First", .defaultValue = 0.2f});
-    group.AddParameterStorageBatch(synth::MakeParameterStorageBatch(group.Config(), group.GestureCount(), 1));
-    auto& second = manager.CreateParameter(group, {.name = "Second", .defaultValue = 0.3f});
-    first.SetGestureActive(0, 0, true);
-    first.SetGestureActive(1, 0, true);
-    first.SetGestureActive(2, 0, true);
-    second.SetGestureActive(0, 0, true);
-    second.SetGestureActive(1, 0, true);
-
-    manager.ClearGestureActiveFlagsForActiveSceneSelection(0);
-
-    REQUIRE_TRUE(!first.GestureActive(0, 0));
-    REQUIRE_TRUE(!first.GestureActive(1, 0));
-    REQUIRE_TRUE(first.GestureActive(2, 0));
-    REQUIRE_TRUE(!second.GestureActive(0, 0));
-    REQUIRE_TRUE(!second.GestureActive(1, 0));
-}
-
 namespace {
 
 constexpr std::size_t kSimParams = 3;
@@ -10859,7 +10832,7 @@ TEST_CASE(randomized_parameter_modulation_simulation) {
                     break;
                 }
             };
-            switch (rng() % 19) {
+            switch (rng() % 18) {
             case 0: {
                 const auto encoder = encoders[rng() % encoders.size()];
                 const float delta = deltaDist(rng);
@@ -10993,25 +10966,6 @@ TEST_CASE(randomized_parameter_modulation_simulation) {
                 }
                 SimProcessLiteAll(oracle);
                 break;
-            default: {
-                const std::size_t gestureIx = rng() % kSimGestures;
-                action = "clear active gesture " + std::to_string(gestureIx);
-                manager.ClearGestureActiveFlagsForActiveSceneSelection(gestureIx);
-                const float blend = std::clamp(oracle.scene.blend, 0.0f, 1.0f);
-                for (auto& parameter : oracle.params) {
-                    if (blend <= 0.0f) {
-                        SimSetGestureActive(parameter, oracle.scene.leftScene, gestureIx, false);
-                    } else if (blend >= 1.0f) {
-                        SimSetGestureActive(parameter, oracle.scene.rightScene, gestureIx, false);
-                    } else {
-                        SimSetGestureActive(parameter, oracle.scene.leftScene, gestureIx, false);
-                        if (oracle.scene.rightScene != oracle.scene.leftScene) {
-                            SimSetGestureActive(parameter, oracle.scene.rightScene, gestureIx, false);
-                        }
-                    }
-                }
-                break;
-            }
             }
 
             SimCheck(oracle, params, banks, group, slot, manager, seed, step, action);
@@ -11815,7 +11769,7 @@ TEST_CASE(randomized_patch_lifecycle_simulation) {
 
         for (int step = 0; step < steps; ++step) {
             std::string action;
-            switch (rng() % 22) {
+            switch (rng() % 21) {
             case 0:
             case 1:
             case 2: {
@@ -11913,35 +11867,16 @@ TEST_CASE(randomized_patch_lifecycle_simulation) {
                 }
                 SimProcessLiteAll(oracle);
                 break;
-            case 14: {
-                const std::size_t gestureIx = rng() % kSimGestures;
-                action = "patch clear active gesture " + std::to_string(gestureIx);
-                manager.ClearGestureActiveFlagsForActiveSceneSelection(gestureIx);
-                const float blend = std::clamp(oracle.scene.blend, 0.0f, 1.0f);
-                for (auto& parameter : oracle.params) {
-                    if (blend <= 0.0f) {
-                        SimSetGestureActive(parameter, oracle.scene.leftScene, gestureIx, false);
-                    } else if (blend >= 1.0f) {
-                        SimSetGestureActive(parameter, oracle.scene.rightScene, gestureIx, false);
-                    } else {
-                        SimSetGestureActive(parameter, oracle.scene.leftScene, gestureIx, false);
-                        if (oracle.scene.rightScene != oracle.scene.leftScene) {
-                            SimSetGestureActive(parameter, oracle.scene.rightScene, gestureIx, false);
-                        }
-                    }
-                }
-                break;
-            }
+            case 14:
             case 15:
-            case 16:
                 action = "patch save";
                 saveCurrentOracle();
                 break;
-            case 17:
+            case 16:
                 action = "patch save as";
                 saveAsCurrentOracle();
                 break;
-            case 18: {
+            case 17: {
                 action = "patch load directory";
                 const std::size_t versionIx = rng() % savedVersions.size();
                 const std::filesystem::path dir = savedVersions[versionIx].first.parent_path();
@@ -11949,14 +11884,14 @@ TEST_CASE(randomized_patch_lifecycle_simulation) {
                 loadPatchPath(dir, savedVersions[latestIx].second, dir);
                 break;
             }
-            case 19: {
+            case 18: {
                 action = "patch load version";
                 const std::size_t versionIx = rng() % savedVersions.size();
                 const auto& [path, snapshot] = savedVersions[versionIx];
                 loadPatchPath(path, snapshot, path.parent_path());
                 break;
             }
-            case 20:
+            case 19:
                 action = "patch revert";
                 if (!expectedCurrentPatchDir.has_value()) {
                     REQUIRE_TRUE(patchManager.RevertPatch().status == synth::PatchCommandStatus::Ok);

@@ -356,7 +356,6 @@ public:
     bool GestureSelected(std::size_t gestureIx) const;
     void SetGestureValue(std::size_t gestureIx, float value);
     float GestureValue(std::size_t gestureIx) const;
-    void ClearGestureActiveFlagsForActiveSceneSelection(const SceneState& scene, std::size_t gestureIx);
     void ConfigureProcessingTiming(const ParameterProcessingTiming& timing);
     void ProcessSamplePhase1(std::uint64_t sampleIndex);
     void ProcessSamplePhase2();
@@ -886,7 +885,6 @@ public:
     float GestureValue(std::size_t gestureIx) const;
     GestureMetadata& GestureMetadataAt(std::size_t gestureIx);
     const GestureMetadata& GestureMetadataAt(std::size_t gestureIx) const;
-    void ClearGestureActiveFlagsForActiveSceneSelection(std::size_t gestureIx);
 
     std::unique_ptr<UIState> CreateUIState() const;
     void PopulateUIState(UIState& state) const;

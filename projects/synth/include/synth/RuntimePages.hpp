@@ -100,7 +100,6 @@ inline constexpr const char* kFileBrowser = "runtime.file.browser";
 inline constexpr const char* kFileBrowserTitle = "runtime.file.browser.title";
 inline constexpr const char* kFileBrowserCurrentPath = "runtime.file.browser.current_path";
 inline constexpr const char* kFileBrowserSaveName = "runtime.file.browser.save_name";
-inline constexpr const char* kFileBrowserParent = "runtime.file.browser.parent";
 inline constexpr const char* kFileBrowserList = "runtime.file.browser.list";
 inline constexpr const char* kFileBrowserActions = "runtime.file.browser.actions";
 inline constexpr const char* kFileBrowserConfirm = "runtime.file.browser.confirm";
@@ -224,7 +223,6 @@ inline constexpr const char* kFileBrowserSaveName = "runtime.file.browser.save_n
 inline constexpr const char* kFileBrowserSelect = "runtime.file.browser.select";
 inline constexpr const char* kFileBrowserAccept = "runtime.file.browser.accept";
 inline constexpr const char* kFileBrowserOpen = "runtime.file.browser.open";
-inline constexpr const char* kFileBrowserParent = "runtime.file.browser.parent";
 inline constexpr const char* kFileBrowserOverwriteSaveAs = "runtime.file.browser.overwrite_save_as";
 inline constexpr const char* kFileBrowserConfirm = "runtime.file.browser.confirm";
 inline constexpr const char* kFileBrowserCancel = "runtime.file.browser.cancel";
@@ -245,7 +243,6 @@ inline constexpr std::string_view kFileActions[] = {
     kFileBrowserSelect,
     kFileBrowserAccept,
     kFileBrowserOpen,
-    kFileBrowserParent,
     kFileBrowserOverwriteSaveAs,
     kFileBrowserConfirm,
     kFileBrowserCancel,

@@ -4818,8 +4818,6 @@ int main()
     Require(fileSurface.Snapshot().browserEntries[0].name == "Beta", "load browser orders beta first");
     Require(fileSurface.Snapshot().browserEntries[1].name == "PatchA", "load browser orders patch second");
     const synth::ui::NodeTree flatLoadTree = fileSurface.BuildTree();
-    Require(FindNodeById(flatLoadTree, synth::runtime_ui::NodeIds::kFileBrowserParent) == nullptr,
-            "flat browser has no parent button");
     Require(FindNodeById(flatLoadTree, synth::runtime_ui::NodeIds::FileBrowserEntryOpen(0)) == nullptr,
             "flat browser has no open button");
     const synth::ui::Node* firstLoadRow =

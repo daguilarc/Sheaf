@@ -673,7 +673,7 @@ public:
         return midiProcessors_[controllerIx].input.get();
     }
 
-    // Unlocked reference to the live instrument (smi-8). LEGAL ONLY: (1)
+    // Unlocked reference to the live instrument. LEGAL ONLY: (1)
     // pre-audio initialization -- single-threaded app/engine setup before
     // Initialize() has started any concurrent activity (e.g. the app's own
     // Init() populating its seed instrument); or (2) while the caller already
@@ -715,7 +715,7 @@ public:
     // Initialize() returns.
     const MidiInstrumentConfig& DefaultInstrument() const { return defaultInstrumentConfig_; }
 
-    // Serialized edit entry point (smi-8): applies `edit` to the live
+    // Serialized edit entry point: applies `edit` to the live
     // instrument under the same lock used for coherent snapshots of instrument
     // and audio-device state. Message-thread only (mirrors
     // MidiControllerProfileConfig's old message-thread-only

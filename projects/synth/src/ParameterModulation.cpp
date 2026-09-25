@@ -2503,38 +2503,6 @@ float ParameterGroup::GestureValue(std::size_t gestureIx) const {
     return manager_->GestureValue(gestureIx);
 }
 
-void ParameterGroup::ClearGestureActiveFlagsForActiveSceneSelection(const SceneState& scene, std::size_t gestureIx) {
-    if (gestureIx >= gestureCount_) {
-        throw std::out_of_range("gesture index out of range");
-    }
-    if (scene.leftScene >= config_.numScenes || scene.rightScene >= config_.numScenes) {
-        throw std::out_of_range("scene index out of range");
-    }
-
-    const float blend = std::clamp(scene.blend, 0.0f, 1.0f);
-    auto clearParameter = [&](Parameter& parameter) {
-        if (blend <= 0.0f) {
-            parameter.SetGestureActive(scene.leftScene, gestureIx, false);
-        } else if (blend >= 1.0f) {
-            parameter.SetGestureActive(scene.rightScene, gestureIx, false);
-        } else {
-            parameter.SetGestureActive(scene.leftScene, gestureIx, false);
-            if (scene.rightScene != scene.leftScene) {
-                parameter.SetGestureActive(scene.rightScene, gestureIx, false);
-            }
-        }
-    };
-
-    for (const auto& parameter : parameters_) {
-        clearParameter(*parameter);
-    }
-    for (const auto& batch : extraStorageBatches_) {
-        for (const auto& parameter : batch->parameters) {
-            clearParameter(*parameter);
-        }
-    }
-}
-
 Bank::Bank(ParameterManager* manager)
     : manager_(manager) {}
 
@@ -3647,12 +3615,6 @@ GestureMetadata& ParameterManager::GestureMetadataAt(std::size_t gestureIx) {
 
 const GestureMetadata& ParameterManager::GestureMetadataAt(std::size_t gestureIx) const {
     return gestures_.Metadata(gestureIx);
-}
-
-void ParameterManager::ClearGestureActiveFlagsForActiveSceneSelection(std::size_t gestureIx) {
-    for (const auto& group : groups_) {
-        group->ClearGestureActiveFlagsForActiveSceneSelection(scene_, gestureIx);
-    }
 }
 
 std::size_t ParameterManager::MaxVoiceCount() const {
