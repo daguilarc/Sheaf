@@ -426,36 +426,13 @@ bool ParseDecimalIndex(std::string_view text, std::size_t& result) {
     return parsed.ec == std::errc{} && parsed.ptr == end;
 }
 
-// Every depth named under json's "modDepths", at every level, counts as
-// missing: none of them can exist since their own parent does not.
-std::size_t CountMissingDepthsAssumingAbsent(JSON json, std::size_t numModulators) {
-    if (!IsJsonObject(json)) {
-        return 0;
-    }
-    const JSON modDepths = json.Get("modDepths");
-    if (!IsJsonObject(modDepths)) {
-        return 0;
-    }
-    std::size_t missing = 0;
-    const JsonMember* members = JsonObjectMembers(modDepths);
-    for (std::size_t ix = 0; ix < modDepths.Size(); ++ix) {
-        if (members[ix].m_key == nullptr) {
-            continue;
-        }
-        std::size_t modIx = 0;
-        if (!ParseDecimalIndex(members[ix].m_key, modIx) || modIx >= numModulators) {
-            continue;
-        }
-        ++missing;
-        missing += CountMissingDepthsAssumingAbsent(JSON(members[ix].m_value), numModulators);
-    }
-    return missing;
-}
-
 // Mirrors the reach of Parameter::LoadValuesFromJSON's own "modDepths" walk,
 // without creating anything: how many of the depths json names for
-// `parameter`, at every level, do not exist on it yet.
-std::size_t CountMissingDepthsForValues(const Parameter& parameter, JSON json) {
+// `parameter`, at every level, do not exist on it yet. A null parameter
+// counts every depth json names as missing, since none of them can exist
+// without their own parent -- the state a name under a missing depth's own
+// "modDepths" is in.
+std::size_t CountMissingDepthsForValues(const Parameter* parameter, JSON json, std::size_t numModulators) {
     if (!IsJsonObject(json)) {
         return 0;
     }
@@ -463,7 +440,6 @@ std::size_t CountMissingDepthsForValues(const Parameter& parameter, JSON json) {
     if (!IsJsonObject(modDepths)) {
         return 0;
     }
-    const std::size_t numModulators = parameter.Group().Config().numModulators;
     std::size_t missing = 0;
     const JsonMember* members = JsonObjectMembers(modDepths);
     for (std::size_t ix = 0; ix < modDepths.Size(); ++ix) {
@@ -474,12 +450,13 @@ std::size_t CountMissingDepthsForValues(const Parameter& parameter, JSON json) {
         if (!ParseDecimalIndex(members[ix].m_key, modIx) || modIx >= numModulators) {
             continue;
         }
-        const Parameter* depthParameter = parameter.ModulationDepthParameter(modIx);
+        const Parameter* depthParameter = parameter != nullptr ? parameter->ModulationDepthParameter(modIx) : nullptr;
         if (depthParameter == nullptr) {
             ++missing;
-            missing += CountMissingDepthsAssumingAbsent(JSON(members[ix].m_value), numModulators);
+            missing += CountMissingDepthsForValues(nullptr, JSON(members[ix].m_value), numModulators);
         } else {
-            missing += CountMissingDepthsForValues(*depthParameter, JSON(members[ix].m_value));
+            missing += CountMissingDepthsForValues(depthParameter, JSON(members[ix].m_value),
+                                                    depthParameter->Group().Config().numModulators);
         }
     }
     return missing;
@@ -3252,7 +3229,8 @@ std::vector<DepthNeed> ParameterManager::MissingDepthsForValuesJSON(JSON paramet
         if (parameter == nullptr) {
             continue;
         }
-        const std::size_t missing = CountMissingDepthsForValues(*parameter, JSON(members[ix].m_value));
+        const std::size_t missing = CountMissingDepthsForValues(parameter, JSON(members[ix].m_value),
+                                                                 parameter->Group().Config().numModulators);
         if (missing == 0) {
             continue;
         }
