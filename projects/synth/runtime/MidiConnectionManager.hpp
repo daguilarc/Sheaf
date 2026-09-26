@@ -1,13 +1,13 @@
 #pragma once
 
 // synth_runtime::MidiConnectionManager — per-controller MIDI device lifecycle
-// owner. Owns a vector of synth_juce::MidiInHandler/
-// MidiOutputHandler parallel to the engine's instrument controller slots,
+// owner. Owns a vector of synth_runtime::MidiInputEndpoint/
+// MidiOutputEndpoint parallel to the engine's instrument controller slots,
 // plus the MidiConnectionState mirror and the MidiDevicePoller that watches
 // for USB device list changes in the background. This is the runtime-side
 // binding of the JUCE-free ExecuteReconcilePlan/PlanMidiReconciliation core
-// (include/synth/MidiReconcile.hpp) to real JUCE device handlers and
-// synth::Engine<App>.
+// (include/synth/MidiReconcile.hpp) to a device access (real JUCE device
+// handlers by default, see MidiDeviceAccess below) and synth::Engine<App>.
 //
 // Forwarding-processor swap safety (binding): reopening
 // or rebuilding a controller's input device must never leave a MIDI callback
@@ -55,9 +55,10 @@
 //
 // Sole owner of every device handler (binding): this manager is the sole
 // owner of every
-// controller slot's MidiInHandler/MidiOutputHandler, including slot 0 -- so
-// there is exactly one owner per physical device and no sink/open
-// contention. The old single-slot MidiPanel UI was replaced
+// controller slot's MidiInputEndpoint/MidiOutputEndpoint, including slot 0 --
+// so there is one owner per controller slot of this manager, since two
+// managers in one process can each open a device. The old single-slot
+// MidiPanel UI was replaced
 // with ControllersPageSurface (ControllersPageUI.hpp), a genuinely
 // per-controller UI; ControllersPageSurface
 // does NOT call into this manager to open/close devices directly -- every
@@ -84,8 +85,10 @@
 #include <juce_audio_devices/juce_audio_devices.h>
 
 #include <atomic>
+#include <chrono>
 #include <cstddef>
 #include <cstdint>
+#include <functional>
 #include <memory>
 #include <string>
 #include <vector>
@@ -183,12 +186,34 @@ inline synth::MidiDeviceList ForceDirtyEnumerate() {
 
 }  // namespace detail
 
+// Everything a MidiConnectionManager needs to reach real devices, injectable
+// so a test can substitute fakes for enumeration and for every endpoint it
+// opens. The member defaults are exactly what the manager used before this
+// seam existed (detail::EnumerateDevices, the JUCE handlers below, a
+// five-second poll), so a host that constructs a manager with none of this
+// specified -- every host today -- behaves as it did before.
+struct MidiDeviceAccess {
+    using Enumerate = std::function<synth::MidiDeviceList()>;
+    using InputFactory = std::function<std::unique_ptr<MidiInputEndpoint>(synth_juce::RuntimeMidiEpoch)>;
+    using OutputFactory = std::function<std::unique_ptr<MidiOutputEndpoint>(synth_juce::RuntimeMidiEpoch)>;
+
+    Enumerate enumerate = detail::EnumerateDevices;
+    InputFactory makeInput = [](synth_juce::RuntimeMidiEpoch epoch) -> std::unique_ptr<MidiInputEndpoint> {
+        return std::make_unique<synth_juce::MidiInHandler>(epoch);
+    };
+    OutputFactory makeOutput = [](synth_juce::RuntimeMidiEpoch epoch) -> std::unique_ptr<MidiOutputEndpoint> {
+        return std::make_unique<synth_juce::MidiOutputHandler>(epoch);
+    };
+    std::chrono::milliseconds pollInterval{std::chrono::seconds(5)};
+};
+
 template <synth::SynthApplication App>
 class MidiConnectionManager {
 public:
     explicit MidiConnectionManager(synth::Engine<App>& engine,
-                                   synth_juce::RuntimeMidiEpoch midiEpoch = {})
-        : engine_(engine), midiEpoch_(midiEpoch) {}
+                                   synth_juce::RuntimeMidiEpoch midiEpoch = {},
+                                   MidiDeviceAccess access = {})
+        : engine_(engine), midiEpoch_(midiEpoch), access_(std::move(access)), poller_(access_.pollInterval) {}
 
     ~MidiConnectionManager() {
         // Shutdown ordering (binding): stop/join the
@@ -237,7 +262,7 @@ public:
     // fired before this point did not also run a reconcile pass of its own.
     void StartupReconcile() {
         ResizeToControllerCount();
-        Reconcile(detail::EnumerateDevices());
+        Reconcile(access_.enumerate());
         started_ = true;
         // Degraded mode (see detail::EnumerateDevices()'s doc comment): the
         // poller's injected enumerate callback is NOT the real JUCE
@@ -286,7 +311,7 @@ public:
             return;
         }
 
-        const synth::MidiDeviceList present = detail::EnumerateDevices();
+        const synth::MidiDeviceList present = access_.enumerate();
         const bool listChanged = !(hasLastEnumerated_ && present == lastEnumerated_);
         const synth::MidiTickResponse response = synth::PlanMidiTickResponse(
             /*pollerDirty=*/true, listChanged, /*rebuildPending=*/reconciling_);
@@ -352,12 +377,12 @@ public:
         if (!response.reconcile || reconciling_) {
             return;
         }
-        Reconcile(detail::EnumerateDevices());
+        Reconcile(access_.enumerate());
     }
 
     const synth::MidiConnectionState& State() const { return state_; }
 
-    synth::MidiDeviceList EnumerateNow() const { return detail::EnumerateDevices(); }
+    synth::MidiDeviceList EnumerateNow() const { return access_.enumerate(); }
 
     // Message-thread snapshot signal for UI consumers. Reconciliation remains
     // owned by OnTimerTick()/OnInstrumentRebuilt(); consumers only observe the
@@ -392,7 +417,7 @@ private:
     // SetSink(ix, nullptr) -- see ClearSinkSync's
     // doc comment) the output sink before Close()ing both handlers, since the
     // vector resize immediately below destroys them; for growingIx (after the
-    // resize), construct fresh handlers.
+    // resize), construct fresh handlers through access_'s factories.
     void ResizeToControllerCount() {
         const std::size_t oldCount = inputHandlers_.size();
         const std::size_t newCount = engine_.MidiControllerCount();
@@ -416,8 +441,8 @@ private:
         state_.controllers.resize(newCount);
 
         for (const std::size_t ix : resizePlan.growingIx) {
-            inputHandlers_[ix] = std::make_unique<synth_juce::MidiInHandler>(midiEpoch_);
-            outputHandlers_[ix] = std::make_unique<synth_juce::MidiOutputHandler>(midiEpoch_);
+            inputHandlers_[ix] = access_.makeInput(midiEpoch_);
+            outputHandlers_[ix] = access_.makeOutput(midiEpoch_);
         }
         for (std::size_t ix = 0; ix < newCount; ++ix) {
             InstallForwardingProcessor(ix);
@@ -606,9 +631,10 @@ private:
 
     synth::Engine<App>& engine_;
     synth_juce::RuntimeMidiEpoch midiEpoch_;
+    MidiDeviceAccess access_;
 
-    std::vector<std::unique_ptr<synth_juce::MidiInHandler>> inputHandlers_;
-    std::vector<std::unique_ptr<synth_juce::MidiOutputHandler>> outputHandlers_;
+    std::vector<std::unique_ptr<MidiInputEndpoint>> inputHandlers_;
+    std::vector<std::unique_ptr<MidiOutputEndpoint>> outputHandlers_;
     synth::MidiConnectionState state_;
     synth::MidiDevicePoller poller_;
 
