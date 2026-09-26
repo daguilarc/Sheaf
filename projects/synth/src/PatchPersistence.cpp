@@ -712,6 +712,7 @@ PatchCommandResult PatchManager::NewPatch() {
     }
     currentPatchDirectory_.reset();
     pendingSave_.reset();
+    heldSave_.reset();
     return {.status = PatchCommandStatus::Ok};
 }
 
@@ -726,6 +727,9 @@ PatchCommandResult PatchManager::SavePatchAs(const std::filesystem::path& patchD
     if (pendingSave_.has_value()) {
         return {.status = PatchCommandStatus::Busy, .requestId = pendingSave_->requestId, .path = pendingSave_->patchDir};
     }
+    if (heldSave_.has_value()) {
+        return {.status = PatchCommandStatus::Busy, .requestId = heldSave_->requestId, .path = heldSave_->patchDir};
+    }
     std::error_code ec;
     if (std::filesystem::exists(patchDir, ec) || ec) {
         return {.status = PatchCommandStatus::AlreadyExists, .path = patchDir};
@@ -736,6 +740,9 @@ PatchCommandResult PatchManager::SavePatchAs(const std::filesystem::path& patchD
 PatchCommandResult PatchManager::SavePatchAsOverwrite(const std::filesystem::path& patchDir) {
     if (pendingSave_.has_value()) {
         return {.status = PatchCommandStatus::Busy, .requestId = pendingSave_->requestId, .path = pendingSave_->patchDir};
+    }
+    if (heldSave_.has_value()) {
+        return {.status = PatchCommandStatus::Busy, .requestId = heldSave_->requestId, .path = heldSave_->patchDir};
     }
     std::error_code ec;
     if (!std::filesystem::is_directory(patchDir, ec) || ec) {
@@ -766,13 +773,28 @@ PatchCommandResult PatchManager::LoadPatch(const std::filesystem::path& path) {
 }
 
 PatchCommandResult PatchManager::ProcessResponses(std::chrono::system_clock::time_point now) {
-    if (outputBus_ == nullptr || !pendingSave_.has_value()) {
+    if (outputBus_ == nullptr || (!pendingSave_.has_value() && !outstandingSnapshotRequestId_.has_value())) {
         return {.status = PatchCommandStatus::NoCompletion};
     }
 
     MessageOut message;
     while (outputBus_->Pop(message)) {
-        if (message.type != MessageOut::Type::SerializedJSON || message.requestId != pendingSave_->requestId) {
+        if (message.type != MessageOut::Type::SerializedJSON) {
+            continue;
+        }
+        if (outstandingSnapshotRequestId_.has_value() && message.requestId == *outstandingSnapshotRequestId_) {
+            outstandingSnapshotRequestId_.reset();
+            if (hostSnapshotConsumer_) {
+                hostSnapshotConsumer_(message.document);
+            }
+            if (heldSave_.has_value()) {
+                const PendingSave held = *heldSave_;
+                heldSave_.reset();
+                DispatchSerialize(held.kind, held.patchDir);
+            }
+            return {.status = PatchCommandStatus::NoCompletion};
+        }
+        if (!pendingSave_.has_value() || message.requestId != pendingSave_->requestId) {
             continue;
         }
         const PendingSave pending = *pendingSave_;
@@ -813,6 +835,18 @@ PatchCommandResult PatchManager::DispatchSerialize(PendingSave::Kind kind, const
     if (pendingSave_.has_value()) {
         return {.status = PatchCommandStatus::Busy, .requestId = pendingSave_->requestId, .path = pendingSave_->patchDir};
     }
+    if (heldSave_.has_value()) {
+        return {.status = PatchCommandStatus::Busy, .requestId = heldSave_->requestId, .path = heldSave_->patchDir};
+    }
+    if (outstandingSnapshotRequestId_.has_value()) {
+        // A host snapshot is outstanding: hold this save rather than
+        // issuing it now, so the snapshot's caller-owned arena is not
+        // reused out from under it. ProcessResponses dispatches it for
+        // real, through this same function, once the snapshot is consumed.
+        const std::uint64_t requestId = nextRequestId_++;
+        heldSave_ = PendingSave{.kind = kind, .requestId = requestId, .patchDir = patchDir};
+        return {.status = PatchCommandStatus::Pending, .requestId = requestId, .path = patchDir};
+    }
     if (inputBus_ == nullptr || outputBus_ == nullptr) {
         return {.status = PatchCommandStatus::QueueFull, .path = patchDir};
     }
@@ -822,6 +856,25 @@ PatchCommandResult PatchManager::DispatchSerialize(PendingSave::Kind kind, const
     }
     pendingSave_ = PendingSave{.kind = kind, .requestId = requestId, .patchDir = patchDir};
     return {.status = PatchCommandStatus::Pending, .requestId = requestId, .path = patchDir};
+}
+
+PatchCommandResult PatchManager::RequestHostSnapshot(std::string patchName) {
+    if (pendingSave_.has_value() || heldSave_.has_value() || outstandingSnapshotRequestId_.has_value()) {
+        return {.status = PatchCommandStatus::Busy};
+    }
+    if (inputBus_ == nullptr || outputBus_ == nullptr) {
+        return {.status = PatchCommandStatus::QueueFull};
+    }
+    const std::uint64_t requestId = nextRequestId_++;
+    if (!inputBus_->Push(PatchMessageIn::SerializeToJSON(requestId, std::move(patchName)))) {
+        return {.status = PatchCommandStatus::QueueFull, .requestId = requestId};
+    }
+    outstandingSnapshotRequestId_ = requestId;
+    return {.status = PatchCommandStatus::Pending, .requestId = requestId};
+}
+
+void PatchManager::SetHostSnapshotConsumer(std::function<void(JsonDocument&)> consumer) {
+    hostSnapshotConsumer_ = std::move(consumer);
 }
 
 PatchCommandResult PatchManager::LoadPatchVersion(const std::filesystem::path& versionFile,
@@ -842,6 +895,7 @@ PatchCommandResult PatchManager::LoadPatchVersion(const std::filesystem::path& v
         }
         currentPatchDirectory_ = currentPatchDirectory;
         pendingSave_.reset();
+        heldSave_.reset();
         return {.status = PatchCommandStatus::Ok, .path = versionFile};
     } catch (const std::exception&) {
         return {.status = PatchCommandStatus::IOError, .path = versionFile};

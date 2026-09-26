@@ -4017,6 +4017,158 @@ TEST_CASE(engine_initialize_without_a_configuration_file_opens_no_startup_patch)
     std::filesystem::remove_all(dataRoot);
 }
 
+TEST_CASE(host_snapshot_holds_a_save_requested_while_it_is_outstanding) {
+    MidiCatalogTestApp::catalog = synth::MidiAppCatalog{};
+
+    const std::filesystem::path dataRoot =
+        std::filesystem::temp_directory_path() / "patch-manager-host-snapshot-holds-save";
+    std::filesystem::remove_all(dataRoot);
+    const synth::RuntimeDataPaths paths = synth::RuntimeDataPaths::FromDataRoot(dataRoot);
+    std::filesystem::create_directories(paths.patchesRoot);
+
+    synth::Engine<MidiCatalogTestApp> engine([] { return std::uint64_t{0}; });
+    engine.SetRuntimeDataPaths(paths);
+    engine.Initialize();
+    engine.Prepare(48000.0, 32);
+
+    const std::filesystem::path patchDir = paths.patchesRoot / "Current";
+    const synth::PatchCommandResult saveAsResult = engine.Patches().SavePatchAs(patchDir);
+    REQUIRE_TRUE(saveAsResult.status == synth::PatchCommandStatus::Pending);
+
+    TestBlockBuffers buffers(2, 32);
+    {
+        synth::AudioBlock block = buffers.Block(32);
+        engine.ProcessBlock(block, 0);
+    }
+    engine.MessageThreadTick();
+    REQUIRE_TRUE(engine.Patches().CurrentPatchDirectory() == patchDir);
+    engine.ConsumeLastTickPatchResult();  // discard the SaveAs's own Written result
+
+    int consumerCalls = 0;
+    engine.Patches().SetHostSnapshotConsumer([&](synth::JsonDocument&) { ++consumerCalls; });
+
+    const synth::PatchCommandResult snapshotResult = engine.Patches().RequestHostSnapshot("snapshot");
+    REQUIRE_TRUE(snapshotResult.status == synth::PatchCommandStatus::Pending);
+
+    // A save asked for while that snapshot is outstanding is held, not
+    // refused: it answers Pending, exactly as a save that reached the bus
+    // does.
+    const synth::PatchCommandResult saveResult = engine.Patches().SavePatch();
+    REQUIRE_TRUE(saveResult.status == synth::PatchCommandStatus::Pending);
+
+    // Round 1: the snapshot's own SerializeToJSON is applied and answered;
+    // MessageThreadTick's ProcessResponses hands it to the consumer and then
+    // dispatches the held save onto the bus for real.
+    {
+        synth::AudioBlock block = buffers.Block(32);
+        engine.ProcessBlock(block, 0);
+    }
+    engine.MessageThreadTick();
+    REQUIRE_TRUE(consumerCalls == 1);
+    REQUIRE_TRUE(!engine.ConsumeLastTickPatchResult().has_value());
+
+    // Round 2: the held save's own SerializeToJSON, just dispatched, is
+    // applied and answered.
+    {
+        synth::AudioBlock block = buffers.Block(32);
+        engine.ProcessBlock(block, 0);
+    }
+    engine.MessageThreadTick();
+
+    const std::optional<synth::PatchCommandResult> tickResult = engine.ConsumeLastTickPatchResult();
+    REQUIRE_TRUE(tickResult.has_value());
+    REQUIRE_TRUE(tickResult->status == synth::PatchCommandStatus::Written);
+    REQUIRE_TRUE(tickResult->path.parent_path() == patchDir);
+    std::error_code ec;
+    REQUIRE_TRUE(std::filesystem::exists(tickResult->path, ec) && !ec);
+
+    std::filesystem::remove_all(dataRoot);
+}
+
+TEST_CASE(host_snapshot_reaches_the_consumer_and_writes_no_file) {
+    MidiCatalogTestApp::catalog = synth::MidiAppCatalog{};
+
+    const std::filesystem::path dataRoot =
+        std::filesystem::temp_directory_path() / "patch-manager-host-snapshot-writes-no-file";
+    std::filesystem::remove_all(dataRoot);
+    const synth::RuntimeDataPaths paths = synth::RuntimeDataPaths::FromDataRoot(dataRoot);
+    std::filesystem::create_directories(paths.patchesRoot);
+
+    synth::Engine<MidiCatalogTestApp> engine([] { return std::uint64_t{0}; });
+    engine.SetRuntimeDataPaths(paths);
+    engine.Initialize();
+    engine.Prepare(48000.0, 32);
+
+    engine.Manager().ParameterById(engine.Application().carrierId).SceneCenter(0) = 0.62f;
+
+    synth::JsonDocument consumedDocument;
+    int consumerCalls = 0;
+    engine.Patches().SetHostSnapshotConsumer([&](synth::JsonDocument& document) {
+        ++consumerCalls;
+        consumedDocument = document;
+    });
+
+    const synth::PatchCommandResult snapshotResult = engine.Patches().RequestHostSnapshot("snapshot");
+    REQUIRE_TRUE(snapshotResult.status == synth::PatchCommandStatus::Pending);
+
+    TestBlockBuffers buffers(2, 32);
+    {
+        synth::AudioBlock block = buffers.Block(32);
+        engine.ProcessBlock(block, 0);
+    }
+    engine.MessageThreadTick();
+
+    REQUIRE_TRUE(consumerCalls == 1);
+    REQUIRE_TRUE(!consumedDocument.IsNull());
+
+    // The document's parameter values are the engine's live ones: read it
+    // back into a scratch manager built with MidiCatalogTestApp's own
+    // topology (single group, one "Carrier" parameter), as
+    // WriteCarryingInstrumentPatchVersion does to build one.
+    synth::ParameterManager scratchManager;
+    auto& group = scratchManager.CreateGroup(
+        {.numVoices = 1, .numModulators = 1, .numScenes = 1, .maxParameters = 4});
+    for (synth::ModulatorMetadata& metadata : group.GetModulators().Metadata()) {
+        metadata.connected = true;
+    }
+    const synth::ParameterId carrierId =
+        scratchManager.RegisterParameter(group, {.name = "Carrier", .defaultValue = 0.4f});
+    scratchManager.CaptureDefaultControlState();
+    synth::MidiInstrumentConfig unusedInstrument;
+    REQUIRE_TRUE(synth::LoadPatchJSON(consumedDocument.root, scratchManager, unusedInstrument));
+    REQUIRE_NEAR(scratchManager.ParameterById(carrierId).SceneCenter(0), 0.62f, 1e-5f);
+
+    REQUIRE_TRUE(std::filesystem::is_empty(paths.patchesRoot));
+
+    std::filesystem::remove_all(dataRoot);
+}
+
+TEST_CASE(host_snapshot_is_refused_while_a_save_is_outstanding) {
+    MidiCatalogTestApp::catalog = synth::MidiAppCatalog{};
+
+    const std::filesystem::path dataRoot =
+        std::filesystem::temp_directory_path() / "patch-manager-host-snapshot-refused-during-save";
+    std::filesystem::remove_all(dataRoot);
+    const synth::RuntimeDataPaths paths = synth::RuntimeDataPaths::FromDataRoot(dataRoot);
+    std::filesystem::create_directories(paths.patchesRoot);
+
+    synth::Engine<MidiCatalogTestApp> engine([] { return std::uint64_t{0}; });
+    engine.SetRuntimeDataPaths(paths);
+    engine.Initialize();
+    engine.Prepare(48000.0, 32);
+
+    const std::filesystem::path patchDir = paths.patchesRoot / "InFlight";
+    const synth::PatchCommandResult saveResult = engine.Patches().SavePatchAs(patchDir);
+    REQUIRE_TRUE(saveResult.status == synth::PatchCommandStatus::Pending);
+
+    const std::size_t busSizeBeforeSnapshot = engine.Context().patchInputBus->Size();
+    const synth::PatchCommandResult snapshotResult = engine.Patches().RequestHostSnapshot("snapshot");
+    REQUIRE_TRUE(snapshotResult.status == synth::PatchCommandStatus::Busy);
+    REQUIRE_TRUE(engine.Context().patchInputBus->Size() == busSizeBeforeSnapshot);
+
+    std::filesystem::remove_all(dataRoot);
+}
+
 TEST_CASE(engine_relaunch_reopens_the_patch_version_last_opened_even_when_a_newer_version_exists) {
     const std::filesystem::path dataRoot =
         std::filesystem::temp_directory_path() / "engine-relaunch-reopens-recorded-version";

@@ -6,6 +6,7 @@
 #include <atomic>
 #include <chrono>
 #include <filesystem>
+#include <functional>
 #include <memory>
 #include <optional>
 #include <string>
@@ -198,11 +199,13 @@ struct PatchSerializationContext {
     // making the next ApplyPatchMessage call that reuses this same arena,
     // since that call resets the arena and clobbers the previous document's
     // backing memory. The caller must also keep the arena alive until the
-    // document has been consumed. PatchManager satisfies this automatically
-    // via its single-pending-save gate (HasPendingSave()/pendingSave_), which
-    // never issues a new serialize request while a prior one is outstanding —
-    // as long as all serialize requests flow through PatchManager, this
-    // ordering is guaranteed for you.
+    // document has been consumed. PatchManager satisfies this automatically:
+    // a host's own snapshot request (RequestHostSnapshot) is a serialize
+    // request exactly like a save, and PatchManager keeps at most one
+    // serialize request outstanding at a time, holding a save asked for
+    // while a snapshot is outstanding rather than issuing it early — as long
+    // as every serialize request, a host snapshot included, flows through
+    // PatchManager, this ordering is guaranteed for you.
     JsonArena* arena = nullptr;
 };
 
@@ -278,6 +281,20 @@ public:
     PatchCommandResult LoadPatch(const std::filesystem::path& path);
     PatchCommandResult ProcessResponses(std::chrono::system_clock::time_point now = std::chrono::system_clock::now());
 
+    // A host's own request for a serialized snapshot of the live patch,
+    // answered through the consumer SetHostSnapshotConsumer installs rather
+    // than by writing a file. Answers Busy and pushes nothing while a
+    // snapshot, a save, or a save held behind an outstanding snapshot is
+    // already outstanding; QueueFull when the push itself fails. At most one
+    // snapshot request is outstanding at a time.
+    PatchCommandResult RequestHostSnapshot(std::string patchName);
+
+    // Installs the callback ProcessResponses calls, on its own caller's
+    // thread, with the snapshot document as soon as it pops the matching
+    // response off the output bus. The document is only valid for the
+    // duration of that call.
+    void SetHostSnapshotConsumer(std::function<void(JsonDocument&)> consumer);
+
 private:
     struct PendingSave {
         enum class Kind {
@@ -301,6 +318,16 @@ private:
     ParameterManager* parameterManager_ = nullptr;
     std::optional<std::filesystem::path> currentPatchDirectory_;
     std::optional<PendingSave> pendingSave_;
+    // A save, save-as, or save-as-overwrite requested while a host snapshot
+    // is outstanding: its own preconditions (current patch present, target
+    // directory existing or not) already passed, but it has not yet reached
+    // the input bus. ProcessResponses dispatches it, through
+    // DispatchSerialize, right after the snapshot's consumer returns.
+    std::optional<PendingSave> heldSave_;
+    // The request id of a host snapshot pushed by RequestHostSnapshot and not
+    // yet answered by ProcessResponses.
+    std::optional<std::uint64_t> outstandingSnapshotRequestId_;
+    std::function<void(JsonDocument&)> hostSnapshotConsumer_;
     std::uint64_t nextRequestId_ = 1;
     std::size_t initialArenaCapacity_ = 256 * 1024;
 };
