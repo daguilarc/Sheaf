@@ -564,9 +564,8 @@ public:
     //   2. grow: for the arena reason (see the tick contract note on
     //      GrowSerializationArenaForTick), MessageThreadTick grows the arena
     //      and clears arenaGrowPending_ (GrowSerializationArenaForTick clears
-    //      the flag itself, in both the ordinary-growth and drop-at-cap
-    //      cases). This never touches pendingPatchMessage_ or re-pushes
-    //      anything onto patchInputBus_ — ProcessBlock alone owns
+    //      the flag itself). This never touches pendingPatchMessage_ or
+    //      re-pushes anything onto patchInputBus_ — ProcessBlock alone owns
     //      retrying/clearing the stash, on the audio thread, once it
     //      observes the flag cleared.
     //   3. patchManager_.ProcessResponses()
@@ -1398,29 +1397,14 @@ private:
     // MessageThreadTick's (Task 5) sole responsibility for the drain
     // barrier: grow serializationArena_ off the audio thread. Heap
     // allocation here is safe because this never runs on the audio thread.
-    // Growth doubles the arena's current capacity, capped at
-    // serializationContext_.maxArenaCapacity. In the ordinary case (still
-    // under the cap) this must NOT touch pendingPatchMessage_ — see the
-    // tick contract note on MessageThreadTick. The one carve-out: if the
-    // arena is already at the cap (currentCapacity >= maxArenaCapacity),
-    // growing further is pointless (the stash would just exhaust again
-    // forever), so this drops the stashed message, clears both the stash
-    // and arenaGrowPending_, and INFO-logs the failure instead of growing.
-    // A capacity that is merely below the cap but would double past it is
-    // NOT dropped: it still grows once more, clamped to maxArenaCapacity.
+    // Growth doubles the arena's current capacity, with no ceiling: a save's
+    // arena keeps doubling, one tick at a time, until the patch fits it.
+    // This must NOT touch pendingPatchMessage_ — see the tick contract note
+    // on MessageThreadTick; ProcessBlock alone retries the stash, once the
+    // grown arena is in place.
     void GrowSerializationArenaForTick() {
         const std::size_t currentCapacity = serializationArena_.Capacity();
-        if (currentCapacity >= serializationContext_.maxArenaCapacity) {
-            INFO("MessageThreadTick: serialization arena at max capacity %zu; dropping stashed patch message",
-                 serializationContext_.maxArenaCapacity);
-            pendingPatchMessage_.reset();
-            arenaGrowPending_.store(false, std::memory_order_release);
-            return;
-        }
-
-        const std::size_t doubled = currentCapacity * 2;
-        const std::size_t nextCapacity = std::min(doubled, serializationContext_.maxArenaCapacity);
-        serializationArena_.Init(nextCapacity);
+        serializationArena_.Init(currentCapacity * 2);
         arenaGrowPending_.store(false, std::memory_order_release);
     }
 
@@ -1443,8 +1427,7 @@ private:
     // The one construct both running call sites (ProcessBlock's post-retry
     // continuation and DrainPatchInputBus) stash an ArenaExhausted message
     // and raise arenaGrowPending_ through, for MessageThreadTick to grow the
-    // arena (GrowSerializationArenaForTick, with its own cap, stays the
-    // tick's alone).
+    // arena (GrowSerializationArenaForTick stays the tick's alone).
     void StashPendingPatchMessage(PatchMessageIn message) {
         pendingPatchMessage_ = std::move(message);
         arenaGrowPending_.store(true, std::memory_order_release);
@@ -1734,10 +1717,7 @@ private:
     // before pushing it (ParameterManager::ProvisionStorageForPatchValues).
     //
     // Tick contract: MessageThreadTick grows the arena and clears
-    // arenaGrowPending_; it must NOT touch pendingPatchMessage_, except the
-    // documented drop-at-cap carve-out in GrowSerializationArenaForTick
-    // (arena already at serializationContext_.maxArenaCapacity: the stash is
-    // dropped there instead of retried forever). Outside that one case, only
+    // arenaGrowPending_; it never touches pendingPatchMessage_. Only
     // ProcessBlock (audio thread) reads, retries, or clears the stash.
     std::optional<PatchMessageIn> pendingPatchMessage_;
     std::atomic<bool> arenaGrowPending_{false};

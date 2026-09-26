@@ -618,17 +618,12 @@ PatchApplyStatus ApplyPatchMessage(
             }
             return PatchApplyStatus::Serialized;
         }
-        const std::size_t maxArenaCapacity =
-            std::max(context.initialArenaCapacity, context.maxArenaCapacity == 0 ? std::size_t{1} : context.maxArenaCapacity);
         auto arena = std::make_shared<JsonArena>(context.initialArenaCapacity);
         JSON root;
         for (;;) {
             root = BuildPatchJSON(*arena, patchName, manager, instrument, audioDevice, carryInstrument);
             if (!root.IsNull() && !arena->Failed()) {
                 break;
-            }
-            if (arena->Capacity() >= maxArenaCapacity) {
-                return PatchApplyStatus::ArenaExhausted;
             }
             arena->GrowAndReset();
         }

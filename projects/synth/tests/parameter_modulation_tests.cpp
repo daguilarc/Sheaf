@@ -15182,11 +15182,6 @@ TEST_CASE(patch_messages_serialize_load_and_revert_initialized_state) {
     REQUIRE_TRUE(synth::ValidatePatchJSON(out.document.root));
     REQUIRE_TRUE(out.document.root.Get("midiInstrument").IsNull());
     REQUIRE_TRUE(out.document.root.Get("audioDevice").IsNull());
-    REQUIRE_TRUE(synth::ApplyPatchMessage(
-                     synth::PatchMessageIn::SerializeToJSON(43, "Too Small"), manager, instrument, defaultInstrument,
-                     audioDevice, defaultAudioDevice, outputBus,
-                     synth::PatchSerializationContext{.initialArenaCapacity = 1, .maxArenaCapacity = 1}) ==
-                 synth::PatchApplyStatus::ArenaExhausted);
 
     cutoff.SceneCenter(0) = 0.1f;
     instrument.controllers[0].input.identifier = "changed";

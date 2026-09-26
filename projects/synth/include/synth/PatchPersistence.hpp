@@ -184,7 +184,6 @@ private:
 
 struct PatchSerializationContext {
     std::size_t initialArenaCapacity = 256 * 1024;
-    std::size_t maxArenaCapacity = 8 * 1024 * 1024;
 
     // Caller-owned serialization arena. When non-null, ApplyPatchMessage resets
     // and reuses this arena for SerializeToJSON instead of heap-allocating one
