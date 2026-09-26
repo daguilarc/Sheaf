@@ -679,4 +679,24 @@ private:
     bool started_ = false;
 };
 
+// Seeds a Controllers page binding's device-list cache from the manager on
+// first use, then applies whatever change the manager's poller has queued
+// since the last call. JuceRuntimeMainServices and a plugin host each own a
+// MidiConnectionManager and feed their binding this exact pair of calls; the
+// browser has no MidiConnectionManager to poll and keeps its own revision
+// check instead.
+template <typename Binding, typename Manager>
+void FeedControllersDeviceList(Binding& binding, Manager& manager)
+{
+    if (!binding.HasDeviceList())
+    {
+        binding.UpdateDeviceList(manager.DeviceListSnapshot());
+    }
+    synth::MidiDeviceList changedDevices;
+    if (manager.ConsumeDeviceListChange(changedDevices))
+    {
+        binding.UpdateDeviceList(std::move(changedDevices));
+    }
+}
+
 }  // namespace synth_runtime

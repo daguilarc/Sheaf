@@ -1,7 +1,7 @@
 #pragma once
 
+#include "synth/ControllersPageBinding.hpp"
 #include "synth/ControllersPageUI.hpp"
-#include "synth/ControllerWizardDiscoveryCache.hpp"
 #include "synth/Engine.hpp"
 #include "synth/RuntimeFileService.hpp"
 #include "synth/RuntimePages.hpp"
@@ -34,7 +34,8 @@ public:
         : engine_(engine)
         , midiBridge_(midiBridge)
         , audioDevices_(audioDevices)
-        , fileService_(MakeFileCallbacks())
+        , controllersBinding_(engine_)
+        , fileService_(synth::runtime_ui::MakeEngineFileCallbacks(engine_))
         , deadlineSampleProvider_(std::move(deadlineSampleProvider))
         , audioInputStateProvider_(std::move(audioInputStateProvider))
     {
@@ -48,37 +49,13 @@ public:
     synth::runtime_ui::ControllersPageCallbacks MakeControllersCallbacks(
         std::function<void()> onBack)
     {
-        synth::runtime_ui::ControllersPageCallbacks callbacks;
-        callbacks.instrumentSnapshot = [this] {
-            return engine_.InstrumentSnapshot();
-        };
-        callbacks.connectionState = [this] {
-            return midiBridge_.ConnectionState();
-        };
-        callbacks.enumerateDevices = [this] {
-            return wizardDiscoveryCache_.DeviceList();
-        };
-        callbacks.commitInstrument = [this](synth::MidiInstrumentConfig instrument) {
-            engine_.EditInstrument([&instrument](synth::MidiInstrumentConfig& current) {
-                current = std::move(instrument);
+        return controllersBinding_.MakeCallbacks(
+            std::move(onBack),
+            [this] { return midiBridge_.ConnectionState(); },
+            [this] {
+                return engine_.SaveRuntimeConfiguration() ==
+                       synth::RuntimeConfigFileStatus::Ok;
             });
-            wizardDiscoveryCache_.UpdateInstrumentSnapshot(engine_.InstrumentSnapshot());
-            controllersDirty_ = true;
-            instrumentSnapshotDirty_ = false;
-            return true;
-        };
-        callbacks.saveRuntimeConfiguration = [this] {
-            return engine_.SaveRuntimeConfiguration() ==
-                   synth::RuntimeConfigFileStatus::Ok;
-        };
-        callbacks.setStatus = [](std::string) {};
-        callbacks.onBack = std::move(onBack);
-        callbacks.messageCatalog = synth::MakeUISystemMessageChoices(engine_.MidiCatalog());
-        callbacks.analogActionCatalog = synth::MakeAnalogAppActionChoices(engine_.MidiCatalog());
-        callbacks.layouts = synth::MakeControllerWizardRegistry(engine_.MidiCatalog());
-        callbacks.gestureCount = engine_.Manager().GestureCount();
-        wizardDiscoveryCache_.SetRegistry(callbacks.layouts);
-        return callbacks;
     }
 
     void RecordAudioNegotiation(double sampleRate, std::size_t blockSize)
@@ -238,30 +215,18 @@ public:
     void NoteMidiDeviceListChanged()
     {
         const std::uint64_t deviceListRevision = midiBridge_.DeviceListRevision();
-        if (wizardDiscoveryCache_.HasDeviceList() && deviceListRevision == cachedDeviceListRevision_)
+        if (controllersBinding_.HasDeviceList() && deviceListRevision == cachedDeviceListRevision_)
         {
             return;
         }
-        wizardDiscoveryCache_.UpdateDeviceList(midiBridge_.LatestDeviceList());
+        controllersBinding_.UpdateDeviceList(midiBridge_.LatestDeviceList());
         cachedDeviceListRevision_ = deviceListRevision;
     }
 
     void RefreshControllers(synth::runtime_ui::ControllersPageSurface& surface)
     {
         NoteMidiDeviceListChanged();
-        surface.SetEnumerateDevices(wizardDiscoveryCache_.DeviceList());
-        if (instrumentSnapshotDirty_)
-        {
-            wizardDiscoveryCache_.UpdateInstrumentSnapshot(engine_.InstrumentSnapshot());
-            instrumentSnapshotDirty_ = false;
-        }
-        if (controllersDirty_)
-        {
-            surface.MarkDirty();
-            controllersDirty_ = false;
-        }
-        surface.SetDiscovery(wizardDiscoveryCache_.Discovery());
-        surface.RefreshOnTick();
+        controllersBinding_.Refresh(surface);
     }
 
     synth::SyncConfig SnapshotSyncConfiguration()
@@ -321,35 +286,13 @@ private:
         pendingAudioRequestIndex_ = kReleaseAudioRequest;
     }
 
-    synth::runtime_ui::RuntimeFileCallbacks MakeFileCallbacks()
-    {
-        synth::runtime_ui::RuntimeFileCallbacks callbacks;
-        callbacks.currentPatchDirectory = [this] {
-            return engine_.Patches().CurrentPatchDirectory();
-        };
-        callbacks.patchesRoot = [this] {
-            return engine_.DataPaths().patchesRoot;
-        };
-        callbacks.newPatch = [this] { engine_.NewPatch(); };
-        callbacks.savePatch = [this] { engine_.Patches().SavePatch(); };
-        callbacks.savePatchAs = [this](const std::filesystem::path& path) {
-            engine_.Patches().SavePatchAs(path);
-        };
-        callbacks.savePatchAsOverwrite = [this](const std::filesystem::path& path) {
-            engine_.Patches().SavePatchAsOverwrite(path);
-        };
-        callbacks.loadPatch = [this](const std::filesystem::path& path) {
-            engine_.LoadPatch(path);
-        };
-        return callbacks;
-    }
-
     EngineType& engine_;
     MidiBridge& midiBridge_;
     // The devices JS most recently submitted, owned by the enclosing Runtime
     // beside its midiBridge_ (BrowserRuntime.hpp); referenced here the same
     // way midiBridge_ is.
     std::vector<BrowserAudioDevice>& audioDevices_;
+    synth::runtime_ui::ControllersPageBinding<EngineType> controllersBinding_;
     synth::runtime_ui::RuntimeFileService fileService_;
     std::function<float()> deadlineSampleProvider_;
     std::function<BrowserAudioInputState()> audioInputStateProvider_;
@@ -368,10 +311,7 @@ private:
     // kNoPendingAudioRequest.
     std::int32_t pendingAudioRequestIndex_ = kNoPendingAudioRequest;
     BrowserAudioDeviceKind pendingAudioRequestControl_ = BrowserAudioDeviceKind::Input;
-    synth::ControllerWizardDiscoveryCache wizardDiscoveryCache_;
     std::uint64_t cachedDeviceListRevision_ = 0;
-    bool controllersDirty_ = true;
-    bool instrumentSnapshotDirty_ = true;
 };
 
 }  // namespace synth_browser

@@ -1,8 +1,9 @@
 #pragma once
 
 #include "Runtime.hpp"
+#include "MidiConnectionManager.hpp"
 
-#include "synth/ControllerWizardDiscoveryCache.hpp"
+#include "synth/ControllersPageBinding.hpp"
 #include "synth/ControllersPageUI.hpp"
 #include "synth/RuntimeFileService.hpp"
 #include "synth/RuntimePages.hpp"
@@ -22,6 +23,7 @@ class JuceRuntimeMainServices final
 public:
     explicit JuceRuntimeMainServices(Runtime<App>& runtime)
         : runtime_(runtime)
+        , controllersBinding_(runtime_.GetEngine())
         , fileService_(MakeFileCallbacks())
     {
         runtime_.SetAudioStatusHook([this](const juce::String& text) {
@@ -29,8 +31,7 @@ public:
         });
         runtime_.SetAudioSyncHook([this] { audioSyncPending_ = true; });
         runtime_.SetMidiProcessorsRebuiltHook([this] {
-            controllersDirty_ = true;
-            instrumentSnapshotDirty_ = true;
+            controllersBinding_.MarkInstrumentRebuilt();
         });
     }
 
@@ -47,39 +48,13 @@ public:
     synth::runtime_ui::ControllersPageCallbacks MakeControllersCallbacks(
         std::function<void()> onBack)
     {
-        synth::runtime_ui::ControllersPageCallbacks callbacks;
-        callbacks.instrumentSnapshot = [this] {
-            return runtime_.GetEngine().InstrumentSnapshot();
-        };
-        callbacks.connectionState = [this] {
-            return runtime_.MidiConnections().State();
-        };
-        callbacks.enumerateDevices = [this] {
-            return wizardDiscoveryCache_.DeviceList();
-        };
-        callbacks.commitInstrument = [this](synth::MidiInstrumentConfig instrument) {
-            runtime_.GetEngine().EditInstrument(
-                [&](synth::MidiInstrumentConfig& current) {
-                    current = std::move(instrument);
-                });
-            wizardDiscoveryCache_.UpdateInstrumentSnapshot(
-                runtime_.GetEngine().InstrumentSnapshot());
-            controllersDirty_ = true;
-            instrumentSnapshotDirty_ = false;
-            return true;
-        };
-        callbacks.saveRuntimeConfiguration = [this] {
-            return runtime_.SaveRuntimeConfiguration() ==
-                   synth::RuntimeConfigFileStatus::Ok;
-        };
-        callbacks.setStatus = [](std::string) {};
-        callbacks.onBack = std::move(onBack);
-        callbacks.messageCatalog = synth::MakeUISystemMessageChoices(runtime_.GetEngine().MidiCatalog());
-        callbacks.analogActionCatalog = synth::MakeAnalogAppActionChoices(runtime_.GetEngine().MidiCatalog());
-        callbacks.layouts = synth::MakeControllerWizardRegistry(runtime_.GetEngine().MidiCatalog());
-        callbacks.gestureCount = runtime_.GetEngine().Manager().GestureCount();
-        wizardDiscoveryCache_.SetRegistry(callbacks.layouts);
-        return callbacks;
+        return controllersBinding_.MakeCallbacks(
+            std::move(onBack),
+            [this] { return runtime_.MidiConnections().State(); },
+            [this] {
+                return runtime_.SaveRuntimeConfiguration() ==
+                       synth::RuntimeConfigFileStatus::Ok;
+            });
     }
 
     void RefreshAudio(synth::runtime_ui::AudioPageSnapshot& snapshot)
@@ -171,28 +146,8 @@ public:
     void RefreshControllers(synth::runtime_ui::ControllersPageSurface& surface)
     {
         surface.SetFocusGuard(focusGuard_);
-        if (!wizardDiscoveryCache_.HasDeviceList())
-        {
-            wizardDiscoveryCache_.UpdateDeviceList(runtime_.MidiConnections().DeviceListSnapshot());
-        }
-        synth::MidiDeviceList changedDevices;
-        if (runtime_.MidiConnections().ConsumeDeviceListChange(changedDevices))
-        {
-            wizardDiscoveryCache_.UpdateDeviceList(std::move(changedDevices));
-        }
-        surface.SetEnumerateDevices(wizardDiscoveryCache_.DeviceList());
-        if (instrumentSnapshotDirty_)
-        {
-            wizardDiscoveryCache_.UpdateInstrumentSnapshot(runtime_.GetEngine().InstrumentSnapshot());
-            instrumentSnapshotDirty_ = false;
-        }
-        if (controllersDirty_)
-        {
-            surface.MarkDirty();
-            controllersDirty_ = false;
-        }
-        surface.SetDiscovery(wizardDiscoveryCache_.Discovery());
-        surface.RefreshOnTick();
+        FeedControllersDeviceList(controllersBinding_, runtime_.MidiConnections());
+        controllersBinding_.Refresh(surface);
     }
 
     synth::SyncConfig SnapshotSyncConfiguration()
@@ -230,35 +185,21 @@ public:
 private:
     synth::runtime_ui::RuntimeFileCallbacks MakeFileCallbacks()
     {
-        synth::runtime_ui::RuntimeFileCallbacks callbacks;
-        callbacks.currentPatchDirectory = [this] {
-            return runtime_.GetEngine().Patches().CurrentPatchDirectory();
-        };
-        callbacks.patchesRoot = [this] {
-            return runtime_.DataPaths().patchesRoot;
-        };
-        callbacks.newPatch = [this] { runtime_.NewPatch(); };
-        callbacks.savePatch = [this] { runtime_.SavePatch(); };
-        callbacks.savePatchAs = [this](const std::filesystem::path& path) {
-            runtime_.SavePatchAs(path);
-        };
-        callbacks.savePatchAsOverwrite = [this](const std::filesystem::path& path) {
-            runtime_.SavePatchAsOverwrite(path);
-        };
-        callbacks.loadPatch = [this](const std::filesystem::path& path) {
-            runtime_.LoadPatch(path);
-        };
-        return callbacks;
+        return synth::runtime_ui::MakeEngineFileCallbacks(
+            runtime_.GetEngine(),
+            [](const char* action, const synth::PatchCommandResult& result) {
+                INFO("%s status=%s requestId=%llu", action,
+                     synth::PatchCommandStatusName(result.status),
+                     static_cast<unsigned long long>(result.requestId));
+            });
     }
 
     Runtime<App>& runtime_;
+    synth::runtime_ui::ControllersPageBinding<synth::Engine<App>> controllersBinding_;
     synth::runtime_ui::RuntimeFileService fileService_;
     std::function<bool()> focusGuard_;
     std::optional<std::string> audioStatus_;
-    synth::ControllerWizardDiscoveryCache wizardDiscoveryCache_;
     bool audioSyncPending_ = true;
-    bool controllersDirty_ = true;
-    bool instrumentSnapshotDirty_ = true;
 };
 
 }  // namespace synth_runtime
