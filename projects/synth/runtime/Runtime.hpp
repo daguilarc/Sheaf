@@ -8,21 +8,13 @@
 //
 // Startup/shutdown ordering here is binding. MIDI
 // connection lifecycle (device open/close/offline/resync, per controller
-// slot including slot 0) is owned by midiConnections_ (a
-// MidiConnectionManager<App>):
-// engine.SetMidiProcessorsWillRebuildCallback forwards to
-// midiConnections_->OnMidiProcessorsWillRebuild() (detaching every
-// controller's forwarding processor before the engine destroys the current
-// MIDI processor chain), and the rebuilt callback forwards to
-// midiConnections_->OnInstrumentRebuilt() (resizing to the current
-// controller count, reinstalling forwarding, and running one reconcile pass)
-// -- see MidiConnectionManager.hpp's class doc comment for why the manager
-// owns every controller's handlers/sink registration. Runtime's
-// message-thread timer also drives midiConnections_->OnTimerTick() (the
-// self-healing poll-driven reconcile path) every tick, and Start() calls
-// midiConnections_->StartupReconcile() once after Initialize() (which starts
-// the background device-list poller). Runtime owns
-// no MIDI UI component at all -- MidiConnections() exposes midiConnections_
+// slot including slot 0) is owned by midiConnections_, an
+// EngineMidiConnections<App> -- see EngineMidiConnections.hpp's class doc
+// comment for the full construction/Start/OnTimerTick/teardown ordering it
+// owns, and MidiConnectionManager.hpp's class doc comment for why the
+// manager underneath it owns every controller's handlers/sink registration.
+// Runtime owns
+// no MIDI UI component at all -- MidiConnections() exposes the manager
 // directly so the shared ControllersPageSurface can read
 // EnumerateNow()/State() to populate its combos/status dots, the same way
 // JuceRuntimeMainServices::RefreshAudio reads DeviceManager() directly for
@@ -82,6 +74,7 @@
 #include "synth/PortableUI.hpp"
 #include "synth/ThreadId.hpp"
 
+#include "EngineMidiConnections.hpp"
 #include "HostDataPaths.hpp"
 #include "MidiConnectionManager.hpp"
 
@@ -106,57 +99,22 @@ public:
         : startTime_(std::chrono::steady_clock::now())
         , midiEpoch_(synth_juce::RuntimeMidiEpoch::Capture(startTime_))
         , engine_([this]() -> std::uint64_t { return NowMicros(); })
-        , midiConnections_(std::make_unique<MidiConnectionManager<App>>(engine_, midiEpoch_)) {
+        , midiConnections_(std::make_unique<EngineMidiConnections<App>>(engine_, midiEpoch_)) {
         // Wires the external-input-routed signal's storage into the
         // AppContext apps see, before Start()/engine_.Initialize() can ever
         // run App::Init(). inputRoutingSignal_ is a member of this Runtime
         // (constructed above, in the member-init list, before this
         // constructor body runs), so its address is already stable here.
         engine_.Context().inputRoutingSignal = &inputRoutingSignal_;
-
-        // The engine invokes this synchronously, on whichever thread is
-        // performing a rebuild, immediately BEFORE midiProcessors_ is
-        // destroyed/replaced (Initialize()'s rebuilds and
-        // MessageThreadTick()'s rebuild all funnel through
-        // Engine::RebuildMidiProcessors()). Forwarding straight to
-        // midiConnections_ (rather than through a std::function indirection
-        // like onMidiProcessorsRebuilt_) is safe here because midiConnections_
-        // is constructed above, in this same initializer list, before this
-        // lambda can ever run.
-        engine_.SetMidiProcessorsWillRebuildCallback([this] { midiConnections_->OnMidiProcessorsWillRebuild(); });
-
-        // The engine invokes this (on the message thread, from
-        // EditInstrument whenever midiProcessors_ has just been rebuilt.
-        // midiConnections_->OnInstrumentRebuilt() resizes to the current
-        // controller count, reinstalls forwarding, and runs one reconcile
-        // pass -- the same executor path the timer-driven poll uses.
-        // onMidiProcessorsRebuilt_ (wired by MainPane via
-        // SetMidiProcessorsRebuiltHook(), see that method's doc comment) is
-        // the Controllers page's subscription to EVERY rebuild -- not just its
-        // own edits -- so runtime-config or other engine-driven instrument
-        // changes also mark the page dirty: a page that only dirtied on its
-        // own commits or a connection-status
-        // fingerprint would miss exactly this class of change, letting a later edit
-        // commit from a stale snapshot.
-        engine_.SetMidiProcessorsRebuiltCallback([this] {
-            midiConnections_->OnInstrumentRebuilt();
-            if (onMidiProcessorsRebuilt_) {
-                onMidiProcessorsRebuilt_();
-            }
-        });
     }
 
     ~Runtime() override {
         deviceManager_.removeAudioCallback(this);
         stopTimer();
-        // Shutdown ordering (binding): stop the MIDI
-        // sender before closing devices, so no in-flight enqueued MIDI is
-        // delivered to a sink that's about to be torn down, THEN
-        // midiConnections_'s own destructor stops/joins its poller BEFORE
-        // closing any device handler.
-        if (synth::MidiSender* sender = engine_.Context().midiSender; sender != nullptr) {
-            sender->Stop();
-        }
+        // Shutdown ordering (binding, stated once in EngineMidiConnections's
+        // own header comment): its destructor stops the MIDI sender before
+        // destroying the manager, so no in-flight enqueued MIDI is delivered
+        // to a sink that's about to be torn down.
         midiConnections_.reset();
         INFO("Runtime shutting down: %s", engine_.Config().appName.c_str());
         synth::AsyncLogQueue::s_instance.DoLog();
@@ -233,27 +191,20 @@ public:
         INFO("Runtime started: %s", appConfig.appName.c_str());
         const synth::RuntimeConfig& config = engine_.Config();
 
-        // Start the sender before opening MIDI inputs/outputs or starting the
-        // connection poller. Once ingress or the audio callback exists, every
-        // producer therefore has a live consumer.
-        if (synth::MidiSender* sender = engine_.Context().midiSender; sender != nullptr) {
-            sender->Start();
-        }
-
-        // Startup order (binding): engine init -> sender -> startup/runtime
-        // config applied -> ONE synchronous reconcile -> start poller -> audio
-        // device -> ... StartupReconcile() is that
-        // synchronous reconcile: it resizes midiConnections_ to the current
-        // controller count, reconciles every configured ref against
-        // currently-present devices (absent -> offline, never a startup
-        // failure), and starts the background poller. Called unconditionally
-        // here (idempotent, same as the old always-reopen-at-startup behavior)
-        // because Initialize()'s first RebuildMidiProcessors() call is silent
-        // by design — it never invokes midiProcessorsRebuiltCallback_ (see
-        // Engine::Initialize's doc comment) — so midiConnections_ is never
-        // notified during startup and its handler vectors would otherwise stay
-        // unsized.
-        midiConnections_->StartupReconcile();
+        // Startup order (binding, stated once in EngineMidiConnections's own
+        // header comment): starts the sender before opening MIDI
+        // inputs/outputs or starting the connection poller, then runs the
+        // ONE synchronous startup reconcile (resizes midiConnections_ to the
+        // current controller count, reconciles every configured ref against
+        // currently-present devices -- absent -> offline, never a startup
+        // failure -- and starts the background poller). Called
+        // unconditionally here (idempotent, same as the old
+        // always-reopen-at-startup behavior) because Initialize()'s first
+        // RebuildMidiProcessors() call is silent by design — it never
+        // invokes midiProcessorsRebuiltCallback_ (see Engine::Initialize's
+        // doc comment) — so midiConnections_ is never notified during
+        // startup and its handler vectors would otherwise stay unsized.
+        midiConnections_->Start();
 
         // No input device opens merely because the application requested
         // input channels -- the operator selects one explicitly (below, from
@@ -347,7 +298,7 @@ public:
     // MidiConnectionManager reconciles opens/closes the device as needed,
     // mirroring how engine.SetAudioDeviceFromHost works for the audio path
     // (see ApplyAudioDeviceSelection's doc comment).
-    MidiConnectionManager<App>& MidiConnections() { return *midiConnections_; }
+    MidiConnectionManager<App>& MidiConnections() { return midiConnections_->MidiConnections(); }
 
     // The JUCE audio device manager this Runtime drives as
     // AudioIODeviceCallback target: JuceRuntimeMainServices::RefreshAudio reads
@@ -399,7 +350,7 @@ public:
     // ControllersPageUI.hpp's Commit() doc comment). Cleared the same way as
     // the audio hooks (an empty std::function on page teardown), via
     // JuceRuntimeMainServices's destructor.
-    void SetMidiProcessorsRebuiltHook(std::function<void()> hook) { onMidiProcessorsRebuilt_ = std::move(hook); }
+    void SetMidiProcessorsRebuiltHook(std::function<void()> hook) { midiConnections_->SetMidiProcessorsRebuiltHook(std::move(hook)); }
 
     // The Audio page's output combo onChange target (semantics
     // unchanged from the deleted AudioPanel::onOutputSelected path): the
@@ -987,20 +938,12 @@ private:
     std::optional<synth::RuntimeDataPaths> dataPathsOverride_;
 
     // Owns every controller slot's MIDI device handlers, connection state,
-    // and background poller -- see MidiConnectionManager.hpp's class doc
-    // comment. A unique_ptr because it must be constructed
+    // and background poller through one MidiConnectionManager -- see
+    // EngineMidiConnections.hpp's class doc comment for the full wiring
+    // this construct owns. A unique_ptr because it must be constructed
     // after engine_ (it holds a reference to it) and destroyed before
     // engine_ is torn down.
-    std::unique_ptr<MidiConnectionManager<App>> midiConnections_;
-
-    // The Controllers page's rebuild-notification hook, installed via
-    // SetMidiProcessorsRebuiltHook() -- see that
-    // method's doc comment. Invoked at the end of every MIDI-processor
-    // rebuild, AFTER midiConnections_->OnInstrumentRebuilt() has already
-    // reopened/reconciled every slot's connections; empty (a no-op) until
-    // MainPane wires it, and cleared the same way the audio hooks are when
-    // the owning page is torn down.
-    std::function<void()> onMidiProcessorsRebuilt_;
+    std::unique_ptr<EngineMidiConnections<App>> midiConnections_;
 
     // Shell hook: set later by whatever owns the UI, invoked at the end of
     // every timer tick so the app's component(s) can repaint.
