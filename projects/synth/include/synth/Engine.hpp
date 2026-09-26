@@ -232,7 +232,9 @@ public:
     //      pre-startup-patch
     //      rebuild never invokes midiProcessorsRebuiltCallback_, since there
     //      is nothing new for a host to react to yet)
-    //   8. startup patch (sar-8): lastPatchVersionRecord_, populated by
+    //   8. startup patch (sar-8, sar-42): a host that keeps no configuration
+    //      file (dataPaths_.configFile empty) opens no startup patch here and
+    //      writes none. Otherwise lastPatchVersionRecord_, populated by
     //      LoadRuntimeConfiguration() above, selects what to open, then
     //      drains via ApplyPendingPatchMessages()/patchManager_.ProcessResponses()
     //      (patchInputBus_ synchronously). A patch file carries synthesizer
@@ -301,49 +303,55 @@ public:
 
         RebuildMidiProcessors();
 
-        if (!lastPatchVersionRecord_.has_value()) {
-            // No record: a configuration saved before sar-8's record
-            // existed, or no configuration at all. Restore parameters and,
-            // under patchCarriesMappings, the patch's own instrument, then
-            // start recording so every later launch follows the
-            // recorded-version rules below.
-            const std::optional<std::filesystem::path> patchDir = LatestPatchDirectory(dataPaths_.patchesRoot);
-            if (patchDir.has_value()) {
-                const PatchCommandResult result = patchManager_.LoadPatch(*patchDir);
-                ApplyPendingPatchMessages(/*applyInstrument=*/true);
-                patchManager_.ProcessResponses();
-                if (result.status == PatchCommandStatus::Ok) {
-                    RecordPatchVersionAndSave(result.path);
-                    // Only a staged instrument needs saving once it applies;
-                    // a patch saved before patches carried mappings stages
-                    // none, and must not leave this set for a later load.
-                    const std::lock_guard<std::mutex> lock(pendingPatchInstrumentMutex_);
-                    saveRuntimeConfigAfterPatchInstrument_ = pendingPatchInstrument_.has_value();
-                }
-            }
-        } else if (!lastPatchVersionRecord_->empty()) {
-            const std::filesystem::path recordedFile = dataPaths_.patchesRoot / *lastPatchVersionRecord_;
-            std::error_code ec;
-            if (std::filesystem::exists(recordedFile, ec) && !ec) {
-                patchManager_.LoadPatch(recordedFile);
-                ApplyPendingPatchMessages(/*applyInstrument=*/false);
-                patchManager_.ProcessResponses();
-            } else {
-                // The recorded file is gone: fall back to the newest saved
-                // version, restoring its sound only, and re-record it.
+        // A host that keeps no configuration file (sar-42) opens no startup
+        // patch and writes none: lastPatchVersionRecord_ stays unset because
+        // LoadRuntimeConfiguration() above found nothing to load, and the
+        // rest of this step never runs.
+        if (!dataPaths_.configFile.empty()) {
+            if (!lastPatchVersionRecord_.has_value()) {
+                // No record: a configuration saved before sar-8's record
+                // existed, or no configuration at all. Restore parameters and,
+                // under patchCarriesMappings, the patch's own instrument, then
+                // start recording so every later launch follows the
+                // recorded-version rules below.
                 const std::optional<std::filesystem::path> patchDir = LatestPatchDirectory(dataPaths_.patchesRoot);
                 if (patchDir.has_value()) {
                     const PatchCommandResult result = patchManager_.LoadPatch(*patchDir);
-                    ApplyPendingPatchMessages(/*applyInstrument=*/false);
+                    ApplyPendingPatchMessages(/*applyInstrument=*/true);
                     patchManager_.ProcessResponses();
                     if (result.status == PatchCommandStatus::Ok) {
                         RecordPatchVersionAndSave(result.path);
+                        // Only a staged instrument needs saving once it applies;
+                        // a patch saved before patches carried mappings stages
+                        // none, and must not leave this set for a later load.
+                        const std::lock_guard<std::mutex> lock(pendingPatchInstrumentMutex_);
+                        saveRuntimeConfigAfterPatchInstrument_ = pendingPatchInstrument_.has_value();
+                    }
+                }
+            } else if (!lastPatchVersionRecord_->empty()) {
+                const std::filesystem::path recordedFile = dataPaths_.patchesRoot / *lastPatchVersionRecord_;
+                std::error_code ec;
+                if (std::filesystem::exists(recordedFile, ec) && !ec) {
+                    patchManager_.LoadPatch(recordedFile);
+                    ApplyPendingPatchMessages(/*applyInstrument=*/false);
+                    patchManager_.ProcessResponses();
+                } else {
+                    // The recorded file is gone: fall back to the newest saved
+                    // version, restoring its sound only, and re-record it.
+                    const std::optional<std::filesystem::path> patchDir = LatestPatchDirectory(dataPaths_.patchesRoot);
+                    if (patchDir.has_value()) {
+                        const PatchCommandResult result = patchManager_.LoadPatch(*patchDir);
+                        ApplyPendingPatchMessages(/*applyInstrument=*/false);
+                        patchManager_.ProcessResponses();
+                        if (result.status == PatchCommandStatus::Ok) {
+                            RecordPatchVersionAndSave(result.path);
+                        }
                     }
                 }
             }
+            // else: the record is explicitly empty -- New was the last action
+            // before this launch, so no patch opens.
         }
-        // else: the record is explicitly empty -- New was the last action
-        // before this launch, so no patch opens.
     }
 
     // Stores negotiated output-audio values, prepares the MasterClock first,
@@ -804,11 +812,11 @@ public:
     }
 
     RuntimeConfigFileStatus SaveRuntimeConfiguration() const {
-        // No data root configured (a bare test Engine that never called
-        // SetRuntimeDataPaths): there is nowhere to write, and staying quiet
-        // here keeps such tests free of stray temp-file I/O now that saves
-        // can be triggered internally (patch open/save/new), not only by an
-        // explicit host call.
+        // A bare test Engine that never called SetRuntimeDataPaths, or a
+        // host that keeps no configuration file (sar-42): there is nowhere
+        // to write, and staying quiet here keeps such callers free of stray
+        // temp-file I/O now that saves can be triggered internally (patch
+        // open/save/new), not only by an explicit host call.
         if (dataPaths_.configFile.empty()) {
             return RuntimeConfigFileStatus::IOError;
         }

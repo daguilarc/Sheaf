@@ -3990,6 +3990,33 @@ TEST_CASE(engine_opening_a_patch_that_carries_mappings_saves_its_instrument_to_t
     std::filesystem::remove_all(dataRoot);
 }
 
+TEST_CASE(engine_initialize_without_a_configuration_file_opens_no_startup_patch) {
+    MidiCatalogTestApp::catalog = synth::MidiAppCatalog{};
+    MidiCatalogTestApp::catalog.patchCarriesMappings = true;
+
+    const std::filesystem::path dataRoot =
+        std::filesystem::temp_directory_path() / "engine-no-configuration-file-data-root";
+    std::filesystem::remove_all(dataRoot);
+    synth::RuntimeDataPaths paths = synth::RuntimeDataPaths::FromDataRoot(dataRoot);
+    std::filesystem::create_directories(paths.patchesRoot);
+    paths.configFile.clear();
+
+    const synth::MidiInstrumentConfig patchInstrument = MakeRuntimeConfigInstrument("from-patch");
+    const std::filesystem::path patchDir = paths.patchesRoot / "OnDisk";
+    WriteCarryingInstrumentPatchVersion(patchDir, 0.9f, std::chrono::system_clock::now(), patchInstrument);
+
+    synth::Engine<MidiCatalogTestApp> engine([] { return std::uint64_t{0}; });
+    engine.SetRuntimeDataPaths(paths);
+    engine.Initialize();
+    engine.MessageThreadTick();
+
+    REQUIRE_NEAR(engine.Manager().ParameterById(engine.Application().carrierId).SceneCenter(0), 0.4f, 1e-5f);
+    REQUIRE_TRUE(engine.LiveInstrument().controllers.empty());
+    REQUIRE_TRUE(engine.DefaultInstrument().controllers.empty());
+
+    std::filesystem::remove_all(dataRoot);
+}
+
 TEST_CASE(engine_relaunch_reopens_the_patch_version_last_opened_even_when_a_newer_version_exists) {
     const std::filesystem::path dataRoot =
         std::filesystem::temp_directory_path() / "engine-relaunch-reopens-recorded-version";
