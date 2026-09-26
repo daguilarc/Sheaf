@@ -188,10 +188,9 @@ inline synth::MidiDeviceList ForceDirtyEnumerate() {
 
 // Everything a MidiConnectionManager needs to reach real devices, injectable
 // so a test can substitute fakes for enumeration and for every endpoint it
-// opens. The member defaults are exactly what the manager used before this
-// seam existed (detail::EnumerateDevices, the JUCE handlers below, a
-// five-second poll), so a host that constructs a manager with none of this
-// specified -- every host today -- behaves as it did before.
+// opens. The member defaults are detail::EnumerateDevices, the JUCE handlers
+// below, and a five-second poll, so a host that constructs a manager with
+// none of this specified reaches real devices this same way.
 struct MidiDeviceAccess {
     using Enumerate = std::function<synth::MidiDeviceList()>;
     using InputFactory = std::function<std::unique_ptr<MidiInputEndpoint>(synth_juce::RuntimeMidiEpoch)>;

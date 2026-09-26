@@ -1,9 +1,8 @@
 #pragma once
 
 // The Controllers page's engine-derived callbacks, discovery cache and dirty
-// flags: JuceRuntimeMainServices and BrowserRuntimeMainServices each built
-// their own copy of this binding before it moved here, and a plugin host is
-// the third. EngineType is a template parameter, never Engine<App> spelled
+// flags, shared by JuceRuntimeMainServices, BrowserRuntimeMainServices and a
+// plugin host. EngineType is a template parameter, never Engine<App> spelled
 // out, so this header stays free of the concrete engine's own dependencies.
 
 #include "synth/ControllerWizard.hpp"

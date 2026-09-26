@@ -92,6 +92,16 @@
 
 namespace synth_runtime {
 
+// INFO-logs a patch command's outcome. The one definition every JUCE-facing
+// host that drives a PatchManager command uses to report it -- Runtime<App>
+// itself (below) and synth::runtime_ui::MakeEngineFileCallbacks's onCommand
+// (JuceRuntimeMainServices.hpp) both call this rather than each formatting
+// the same line.
+inline void LogPatchCommand(const char* action, const synth::PatchCommandResult& result) {
+    INFO("%s status=%s requestId=%llu", action, synth::PatchCommandStatusName(result.status),
+         static_cast<unsigned long long>(result.requestId));
+}
+
 template <synth::SynthApplication App>
 class Runtime : private juce::AudioIODeviceCallback, private juce::Timer {
 public:
@@ -905,8 +915,7 @@ private:
     }
 
     void LogPatchCommand(const char* action, const synth::PatchCommandResult& result) {
-        INFO("%s status=%s requestId=%llu", action, synth::PatchCommandStatusName(result.status),
-             static_cast<unsigned long long>(result.requestId));
+        synth_runtime::LogPatchCommand(action, result);
     }
 
     // Declared before engine_ so it is initialized first: engine_'s

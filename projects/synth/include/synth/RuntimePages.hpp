@@ -250,8 +250,8 @@ inline constexpr const char* kAppBack = "runtime.app.back";
 }  // namespace Actions
 
 // A host declares which of its runtime pages the sidebar offers. Every field
-// defaults true, so a host that declares nothing gets today's sidebar
-// unchanged: every entry, in BuildSidebarTree's order.
+// defaults true, so a host that declares nothing gets every entry, in
+// BuildSidebarTree's order.
 struct RuntimeSidebarPages
 {
     bool audio = true;
@@ -260,6 +260,17 @@ struct RuntimeSidebarPages
     bool file = true;
     bool loadReadout = true;
 };
+
+// The number of rows a host's declared RuntimeSidebarPages puts in the
+// sidebar, not counting an app-registered page (BuildSidebarTree adds that
+// term itself, since it is not part of this struct). The one definition a
+// host reads to size chrome that sits below the sidebar -- see
+// FroggersPluginEditor.cpp's own use of this for the plugin's ? button.
+inline constexpr int DeclaredSidebarRowCount(const RuntimeSidebarPages& pages)
+{
+    return (pages.audio ? 1 : 0) + (pages.controllers ? 1 : 0) + (pages.sync ? 1 : 0) + (pages.file ? 1 : 0) +
+           (pages.loadReadout ? 1 : 0);
+}
 
 struct SidebarSnapshot
 {
@@ -770,10 +781,7 @@ inline std::vector<ui::ControlOption> ControlOptionsFor(const std::vector<AudioD
 // the same geometry without it.
 inline ui::NodeTree BuildSidebarTree(const SidebarSnapshot& snapshot)
 {
-    const int rowCount = (snapshot.pages.audio ? 1 : 0) + (snapshot.pages.controllers ? 1 : 0) +
-                         (snapshot.pages.sync ? 1 : 0) + (snapshot.pages.file ? 1 : 0) +
-                         (snapshot.registeredPageTitle.has_value() ? 1 : 0) +
-                         (snapshot.pages.loadReadout ? 1 : 0);
+    const int rowCount = DeclaredSidebarRowCount(snapshot.pages) + (snapshot.registeredPageTitle.has_value() ? 1 : 0);
     const ui::Bounds rootBounds = Layout::SidebarRootBounds(rowCount);
 
     const auto sidebarRow = [] {

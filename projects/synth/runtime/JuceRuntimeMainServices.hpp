@@ -185,13 +185,7 @@ public:
 private:
     synth::runtime_ui::RuntimeFileCallbacks MakeFileCallbacks()
     {
-        return synth::runtime_ui::MakeEngineFileCallbacks(
-            runtime_.GetEngine(),
-            [](const char* action, const synth::PatchCommandResult& result) {
-                INFO("%s status=%s requestId=%llu", action,
-                     synth::PatchCommandStatusName(result.status),
-                     static_cast<unsigned long long>(result.requestId));
-            });
+        return synth::runtime_ui::MakeEngineFileCallbacks(runtime_.GetEngine(), &LogPatchCommand);
     }
 
     Runtime<App>& runtime_;

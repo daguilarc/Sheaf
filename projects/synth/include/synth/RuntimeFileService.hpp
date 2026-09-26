@@ -79,19 +79,27 @@ private:
     std::optional<std::string> fileStatus_;
 };
 
-// Binds RuntimeFileCallbacks straight to an engine: JuceRuntimeMainServices
-// and BrowserRuntimeMainServices each built this exact set of five bindings
-// by hand, and a plugin host is the third. New and Load go through
-// Engine::NewPatch/Engine::LoadPatch so a host that records a reopen version
-// keeps recording one; Save, Save As and its overwrite go straight to
-// Engine::Patches() since neither changes what the host reopens. onCommand,
-// when given, is handed each command's name and its PatchCommandResult right
-// after the call that produced it, for a host that logs; the JUCE hosts pass
-// one that logs exactly as Runtime<App>::LogPatchCommand does.
+// Binds RuntimeFileCallbacks straight to an engine, shared by
+// JuceRuntimeMainServices, BrowserRuntimeMainServices and a plugin host. New
+// and Load go through Engine::NewPatch/Engine::LoadPatch so a host that
+// records a reopen version keeps recording one; Save, Save As and its
+// overwrite go straight to Engine::Patches() since neither changes what the
+// host reopens. onCommand, when given, is handed each command's name and its
+// PatchCommandResult right after the call that produced it, for a host that
+// logs; the JUCE hosts pass synth_runtime::LogPatchCommand for this.
 template <typename EngineType>
 RuntimeFileCallbacks MakeEngineFileCallbacks(
     EngineType& engine, std::function<void(const char*, const PatchCommandResult&)> onCommand = {})
 {
+    // Every command below reports through this one call rather than
+    // repeating the same if(onCommand) guard five times.
+    const auto notify = [onCommand](const char* action, const PatchCommandResult& result) {
+        if (onCommand)
+        {
+            onCommand(action, result);
+        }
+    };
+
     RuntimeFileCallbacks callbacks;
     callbacks.currentPatchDirectory = [&engine] {
         return engine.Patches().CurrentPatchDirectory();
@@ -99,40 +107,20 @@ RuntimeFileCallbacks MakeEngineFileCallbacks(
     callbacks.patchesRoot = [&engine] {
         return engine.DataPaths().patchesRoot;
     };
-    callbacks.newPatch = [&engine, onCommand] {
-        const PatchCommandResult result = engine.NewPatch();
-        if (onCommand)
-        {
-            onCommand("NewPatch", result);
-        }
+    callbacks.newPatch = [&engine, notify] {
+        notify("NewPatch", engine.NewPatch());
     };
-    callbacks.savePatch = [&engine, onCommand] {
-        const PatchCommandResult result = engine.Patches().SavePatch();
-        if (onCommand)
-        {
-            onCommand("SavePatch", result);
-        }
+    callbacks.savePatch = [&engine, notify] {
+        notify("SavePatch", engine.Patches().SavePatch());
     };
-    callbacks.savePatchAs = [&engine, onCommand](const std::filesystem::path& path) {
-        const PatchCommandResult result = engine.Patches().SavePatchAs(path);
-        if (onCommand)
-        {
-            onCommand("SavePatchAs", result);
-        }
+    callbacks.savePatchAs = [&engine, notify](const std::filesystem::path& path) {
+        notify("SavePatchAs", engine.Patches().SavePatchAs(path));
     };
-    callbacks.savePatchAsOverwrite = [&engine, onCommand](const std::filesystem::path& path) {
-        const PatchCommandResult result = engine.Patches().SavePatchAsOverwrite(path);
-        if (onCommand)
-        {
-            onCommand("SavePatchAsOverwrite", result);
-        }
+    callbacks.savePatchAsOverwrite = [&engine, notify](const std::filesystem::path& path) {
+        notify("SavePatchAsOverwrite", engine.Patches().SavePatchAsOverwrite(path));
     };
-    callbacks.loadPatch = [&engine, onCommand](const std::filesystem::path& path) {
-        const PatchCommandResult result = engine.LoadPatch(path);
-        if (onCommand)
-        {
-            onCommand("LoadPatch", result);
-        }
+    callbacks.loadPatch = [&engine, notify](const std::filesystem::path& path) {
+        notify("LoadPatch", engine.LoadPatch(path));
     };
     return callbacks;
 }
