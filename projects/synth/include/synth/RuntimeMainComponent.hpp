@@ -59,9 +59,10 @@ template <SynthApplication App, RuntimeMainServices Services>
 class RuntimeMainComponent final : public ui::Surface
 {
 public:
-    RuntimeMainComponent(App& app, Services& services)
+    RuntimeMainComponent(App& app, Services& services, RuntimeSidebarPages pages = {})
         : app_(app),
           services_(services),
+          pages_(pages),
           deadlineMaximum_(DeadlineWindowCapacity(App::Config().uiFrameHz)),
           controllersSurface_(services_.MakeControllersCallbacks([this] {
               ReturnToApplication(RuntimePageKind::Controllers);
@@ -82,6 +83,7 @@ public:
         // runtime's Audio page here (RuntimeConfig::audioPageTitle). Unset for
         // every application that does not, which leaves the sidebar unchanged.
         sidebarSurface_.SetAudioPageTitle(config.audioPageTitle);
+        sidebarSurface_.SetPages(pages_);
 
         // an app opts in by defining App::RegisteredPage() (see
         // HasRegisteredPage, AppConcepts.hpp); App is a concrete, non-erased
@@ -330,10 +332,10 @@ private:
     // the page-level overflow gate never sees this composition, because the
     // resolver is never invoked on it. The residual
     // that leaves is concrete: the composite root's height follows the app's
-    // declared `uiHeight` while the sidebar is a fixed five-row 200px column, so
-    // an app declaring `uiHeight < 200` overruns the window with nothing to
-    // catch it. This is that catch, stated as a precondition on the app's
-    // declaration rather than as a silent clip.
+    // declared `uiHeight` while the sidebar is as tall as the rows it shows, so
+    // an app declaring `uiHeight` shorter than that overruns the window with
+    // nothing to catch it. This is that catch, stated as a precondition on the
+    // app's declaration rather than as a silent clip.
     static void RequireCompositionHolds(ui::Bounds rootBounds,
                                         const ui::Node& content,
                                         const ui::Node& sidebar)
@@ -581,14 +583,26 @@ private:
     {
         if (action.name == Actions::kSidebarAudio)
         {
+            if (!pages_.audio)
+            {
+                return;
+            }
             ShowPage(RuntimeMainPage::Audio);
         }
         else if (action.name == Actions::kSidebarControllers)
         {
+            if (!pages_.controllers)
+            {
+                return;
+            }
             ShowPage(RuntimeMainPage::Controllers);
         }
         else if (action.name == Actions::kSidebarSync)
         {
+            if (!pages_.sync)
+            {
+                return;
+            }
             if (currentPage_ != RuntimeMainPage::Sync)
             {
                 syncSurface_.BeginEdit(services_.SnapshotSyncConfiguration());
@@ -597,6 +611,10 @@ private:
         }
         else if (action.name == Actions::kSidebarFile)
         {
+            if (!pages_.file)
+            {
+                return;
+            }
             ShowPage(RuntimeMainPage::File);
         }
         // gated on hasRegisteredPage_ even though the button (and
@@ -621,6 +639,7 @@ private:
 
     App& app_;
     Services& services_;
+    RuntimeSidebarPages pages_;
     RuntimeMainPage currentPage_ = RuntimeMainPage::Application;
     RollingMax deadlineMaximum_;
     SidebarSurface sidebarSurface_;

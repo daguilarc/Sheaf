@@ -611,6 +611,54 @@ void TestSidebarOpensEachPageAndBackRestoresApp()
             "sync back restores app");
 }
 
+// A plugin host declares a narrower page set: the sidebar shows only the
+// declared entries, sized to match, each opens its page and Back returns, and
+// dispatching an undeclared page's sidebar action leaves the application
+// page showing.
+void TestSidebarShowsOnlyTheDeclaredPages()
+{
+    FakeApp app;
+    FakeServices services;
+    const synth::runtime_ui::RuntimeSidebarPages pages{
+        .audio = false, .controllers = true, .sync = false, .file = true, .loadReadout = false};
+    MainComponent component{app, services, pages};
+
+    const synth::ui::NodeTree tree = component.BuildTree();
+    Require(FindNodeById(tree, synth::runtime_ui::NodeIds::kSidebarControllers) != nullptr,
+            "the declared Controllers entry is built");
+    Require(FindNodeById(tree, synth::runtime_ui::NodeIds::kSidebarFile) != nullptr,
+            "the declared File entry is built");
+    Require(FindNodeById(tree, synth::runtime_ui::NodeIds::kSidebarAudio) == nullptr,
+            "the undeclared Audio entry is not built");
+    Require(FindNodeById(tree, synth::runtime_ui::NodeIds::kSidebarSync) == nullptr,
+            "the undeclared Sync entry is not built");
+    Require(FindNodeById(tree, synth::runtime_ui::NodeIds::kSidebarDeadline) == nullptr,
+            "the undeclared load readout is not built");
+    Require(FindNode(tree, synth::runtime_ui::NodeIds::kSidebarRoot).bounds.height == 80.0f,
+            "the sidebar is as tall as its two declared rows");
+
+    component.DispatchAction(synth::ui::Action::Named("runtime.sidebar.controllers"));
+    Require(component.CurrentPage() == synth::runtime_ui::RuntimeMainPage::Controllers,
+            "the declared Controllers entry opens its page");
+    component.DispatchAction(synth::ui::Action::Named("runtime.controllers.back"));
+    Require(component.CurrentPage() == synth::runtime_ui::RuntimeMainPage::Application,
+            "Controllers Back restores the application");
+
+    component.DispatchAction(synth::ui::Action::Named("runtime.sidebar.file"));
+    Require(component.CurrentPage() == synth::runtime_ui::RuntimeMainPage::File,
+            "the declared File entry opens its page");
+    component.DispatchAction(synth::ui::Action::Named("runtime.file.back"));
+    Require(component.CurrentPage() == synth::runtime_ui::RuntimeMainPage::Application,
+            "File Back restores the application");
+
+    component.DispatchAction(synth::ui::Action::Named("runtime.sidebar.audio"));
+    Require(component.CurrentPage() == synth::runtime_ui::RuntimeMainPage::Application,
+            "dispatching the undeclared Audio action leaves the application page showing");
+    component.DispatchAction(synth::ui::Action::Named("runtime.sidebar.sync"));
+    Require(component.CurrentPage() == synth::runtime_ui::RuntimeMainPage::Application,
+            "dispatching the undeclared Sync action leaves the application page showing");
+}
+
 void TestAppActionsRouteOnlyToAppSurface()
 {
     Fixture fixture;
@@ -1110,6 +1158,7 @@ int main()
     Run("TestCompositeBoundsPreserveAppAndAddSidebar", TestCompositeBoundsPreserveAppAndAddSidebar);
     Run("TestExtentAwareAppTracksResizedContentExtent", TestExtentAwareAppTracksResizedContentExtent);
     Run("TestSidebarOpensEachPageAndBackRestoresApp", TestSidebarOpensEachPageAndBackRestoresApp);
+    Run("TestSidebarShowsOnlyTheDeclaredPages", TestSidebarShowsOnlyTheDeclaredPages);
     Run("TestAppActionsRouteOnlyToAppSurface", TestAppActionsRouteOnlyToAppSurface);
     Run("TestRuntimeActionsRouteOnlyToOwningPageOrServices",
         TestRuntimeActionsRouteOnlyToOwningPageOrServices);

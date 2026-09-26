@@ -249,10 +249,23 @@ inline constexpr const char* kAppBack = "runtime.app.back";
 
 }  // namespace Actions
 
+// A host declares which of its runtime pages the sidebar offers. Every field
+// defaults true, so a host that declares nothing gets today's sidebar
+// unchanged: every entry, in BuildSidebarTree's order.
+struct RuntimeSidebarPages
+{
+    bool audio = true;
+    bool controllers = true;
+    bool sync = true;
+    bool file = true;
+    bool loadReadout = true;
+};
+
 struct SidebarSnapshot
 {
     float deadlinePercent = 0.0f;
     bool controllersWarning = false;
+    RuntimeSidebarPages pages{};
     // unset (nullopt) -> no app-page button is built and the
     // sidebar renders exactly as it did before this field existed. Set ->
     // its value is the button's label text, and the button is placed after
@@ -410,14 +423,15 @@ inline constexpr float kBrowserStatusHeight = 24.0f;
 inline constexpr float kBrowserButtonWidth = 78.0f;
 inline constexpr float kFilePanelPadding = 10.0f;
 
-// five fixed rows (Audio, Controllers, Sync, File, deadline) grow to
-// six when an app registers an extra page, so the extra row has its own
-// stacking space instead of overrunning the fifth row's. `hasRegisteredPage`
-// defaults false so every existing caller keeps today's exact 200px height.
-inline ui::Bounds SidebarRootBounds(bool hasRegisteredPage = false)
+// The sidebar is as tall as the rows it shows: a host declares which of
+// Audio, Controllers, Sync, File and the load readout its sidebar offers
+// (RuntimeSidebarPages), an app registering an extra page adds one more row
+// on top of those, and the column grows or shrinks to match, so the extra
+// row has its own stacking space instead of overrunning the last declared
+// row's.
+inline ui::Bounds SidebarRootBounds(int rowCount)
 {
-    const float rowCount = hasRegisteredPage ? 6.0f : 5.0f;
-    return {0.0f, 0.0f, kSidebarWidth, kSidebarButtonHeight * rowCount};
+    return {0.0f, 0.0f, kSidebarWidth, kSidebarButtonHeight * static_cast<float>(rowCount)};
 }
 
 inline std::string FormatDeadlineText(float percent)
@@ -752,12 +766,15 @@ inline std::vector<ui::ControlOption> ControlOptionsFor(const std::vector<AudioD
 // The sidebar is a resolved subtree like every other producer's, not a
 // hand-assembled one. It used to set every `ui::Node` field by field and stack
 // its rows by multiplying the row height by their index -- producer-side
-// layout arithmetic; the resolver stacks five declared rows to the same
-// geometry without it.
+// layout arithmetic; the resolver stacks whichever rows a host declares to
+// the same geometry without it.
 inline ui::NodeTree BuildSidebarTree(const SidebarSnapshot& snapshot)
 {
-    const ui::Bounds rootBounds =
-        Layout::SidebarRootBounds(snapshot.registeredPageTitle.has_value());
+    const int rowCount = (snapshot.pages.audio ? 1 : 0) + (snapshot.pages.controllers ? 1 : 0) +
+                         (snapshot.pages.sync ? 1 : 0) + (snapshot.pages.file ? 1 : 0) +
+                         (snapshot.registeredPageTitle.has_value() ? 1 : 0) +
+                         (snapshot.pages.loadReadout ? 1 : 0);
+    const ui::Bounds rootBounds = Layout::SidebarRootBounds(rowCount);
 
     const auto sidebarRow = [] {
         ui::ControlStyle style;
@@ -775,32 +792,44 @@ inline ui::NodeTree BuildSidebarTree(const SidebarSnapshot& snapshot)
 
     ui::Builder builder;
     builder.Root(NodeIds::kSidebarRoot, rootBounds);
-    builder.Button(NodeIds::kSidebarAudio, snapshot.audioPageTitle.value_or("Audio"),
-                   ui::Action::Named(Actions::kSidebarAudio), sidebarRow());
-    builder.Row(std::string(NodeIds::kSidebarControllers) + ".row",
-                controllersRow,
-                [&](ui::Builder& row) {
-                    ui::ControlStyle button;
-                    button.layout.main = ui::Extent::Weight(1.0f);
-                    row.Button(NodeIds::kSidebarControllers,
-                               "Controllers",
-                               ui::Action::Named(Actions::kSidebarControllers),
-                               button);
-                    if (snapshot.controllersWarning)
-                    {
-                        ui::ControlStyle badge;
-                        badge.layout.explicitBounds =
-                            ui::Bounds{Layout::kSidebarWidth - Layout::kWarningBadgeTrailingInset,
-                                       0.0f,
-                                       Layout::kWarningBadgeWidth,
-                                       Layout::kSidebarButtonHeight};
-                        row.StatusText(NodeIds::kSidebarControllersWarning, "!", badge);
-                    }
-                });
-    builder.Button(NodeIds::kSidebarSync, "Sync", ui::Action::Named(Actions::kSidebarSync),
-                   sidebarRow());
-    builder.Button(NodeIds::kSidebarFile, "File", ui::Action::Named(Actions::kSidebarFile),
-                   sidebarRow());
+    if (snapshot.pages.audio)
+    {
+        builder.Button(NodeIds::kSidebarAudio, snapshot.audioPageTitle.value_or("Audio"),
+                       ui::Action::Named(Actions::kSidebarAudio), sidebarRow());
+    }
+    if (snapshot.pages.controllers)
+    {
+        builder.Row(std::string(NodeIds::kSidebarControllers) + ".row",
+                    controllersRow,
+                    [&](ui::Builder& row) {
+                        ui::ControlStyle button;
+                        button.layout.main = ui::Extent::Weight(1.0f);
+                        row.Button(NodeIds::kSidebarControllers,
+                                   "Controllers",
+                                   ui::Action::Named(Actions::kSidebarControllers),
+                                   button);
+                        if (snapshot.controllersWarning)
+                        {
+                            ui::ControlStyle badge;
+                            badge.layout.explicitBounds =
+                                ui::Bounds{Layout::kSidebarWidth - Layout::kWarningBadgeTrailingInset,
+                                           0.0f,
+                                           Layout::kWarningBadgeWidth,
+                                           Layout::kSidebarButtonHeight};
+                            row.StatusText(NodeIds::kSidebarControllersWarning, "!", badge);
+                        }
+                    });
+    }
+    if (snapshot.pages.sync)
+    {
+        builder.Button(NodeIds::kSidebarSync, "Sync", ui::Action::Named(Actions::kSidebarSync),
+                       sidebarRow());
+    }
+    if (snapshot.pages.file)
+    {
+        builder.Button(NodeIds::kSidebarFile, "File", ui::Action::Named(Actions::kSidebarFile),
+                       sidebarRow());
+    }
     // the app-registered page's button, placed after File and
     // before the deadline readout -- a page button among page buttons,
     // ahead of the DSP status line that closes the column regardless of
@@ -810,6 +839,10 @@ inline ui::NodeTree BuildSidebarTree(const SidebarSnapshot& snapshot)
     {
         builder.Button(NodeIds::kSidebarApp, *snapshot.registeredPageTitle,
                        ui::Action::Named(Actions::kSidebarApp), sidebarRow());
+    }
+    if (!snapshot.pages.loadReadout)
+    {
+        return builder.Build(rootBounds);
     }
     builder.StatusText(NodeIds::kSidebarDeadline,
                        Layout::FormatDeadlineText(snapshot.deadlinePercent),
@@ -1615,6 +1648,11 @@ public:
     void SetAudioPageTitle(std::optional<std::string> title)
     {
         snapshot_.audioPageTitle = std::move(title);
+    }
+
+    void SetPages(RuntimeSidebarPages pages)
+    {
+        snapshot_.pages = pages;
     }
 
 private:
