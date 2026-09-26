@@ -4169,6 +4169,99 @@ TEST_CASE(host_snapshot_is_refused_while_a_save_is_outstanding) {
     std::filesystem::remove_all(dataRoot);
 }
 
+TEST_CASE(naming_an_existing_patch_makes_it_current_without_a_message) {
+    const std::filesystem::path dataRoot =
+        std::filesystem::temp_directory_path() / "engine-name-current-patch-existing";
+    std::filesystem::remove_all(dataRoot);
+    const synth::RuntimeDataPaths paths = synth::RuntimeDataPaths::FromDataRoot(dataRoot);
+    std::filesystem::create_directories(paths.patchesRoot);
+
+    synth::Engine<EngineTestApp> engine([] { return std::uint64_t{0}; });
+    engine.SetRuntimeDataPaths(paths);
+    engine.Initialize();  // patchesRoot is empty here: no startup patch opens
+    engine.Prepare(48000.0, 32);
+
+    const std::filesystem::path patchDir = paths.patchesRoot / "p";
+    WriteProbePatchVersion(patchDir, 0.5f, std::chrono::system_clock::now());
+
+    REQUIRE_TRUE(engine.Context().patchInputBus->Size() == 0);
+    REQUIRE_TRUE(engine.NameCurrentPatch(std::filesystem::path("p")));
+    REQUIRE_TRUE(engine.Context().patchInputBus->Size() == 0);
+    REQUIRE_TRUE(engine.CurrentPatchRelativePath().has_value());
+    REQUIRE_TRUE(*engine.CurrentPatchRelativePath() == "p");
+
+    // A trailing separator names the same directory.
+    REQUIRE_TRUE(engine.NameCurrentPatch(std::filesystem::path("p/")));
+    REQUIRE_TRUE(engine.Context().patchInputBus->Size() == 0);
+    REQUIRE_TRUE(*engine.CurrentPatchRelativePath() == "p");
+
+    const synth::PatchCommandResult saveResult = engine.Patches().SavePatch();
+    REQUIRE_TRUE(saveResult.status == synth::PatchCommandStatus::Pending);
+    TestBlockBuffers buffers(2, 32);
+    {
+        synth::AudioBlock block = buffers.Block(32);
+        engine.ProcessBlock(block, 0);
+    }
+    engine.MessageThreadTick();
+    const std::optional<synth::PatchCommandResult> tickResult = engine.ConsumeLastTickPatchResult();
+    REQUIRE_TRUE(tickResult.has_value());
+    REQUIRE_TRUE(tickResult->status == synth::PatchCommandStatus::Written);
+    // NameCurrentPatch records PatchBrowser::ResolveLoadPath's canonical
+    // form, which can differ textually from patchDir when the OS temp
+    // directory itself resolves through a symlink (e.g. macOS's /var), so
+    // this compares the two paths as the same directory rather than as
+    // equal strings.
+    std::error_code equivalentEc;
+    REQUIRE_TRUE(std::filesystem::equivalent(tickResult->path.parent_path(), patchDir, equivalentEc) &&
+                 !equivalentEc);
+
+    std::filesystem::remove_all(dataRoot);
+}
+
+TEST_CASE(naming_a_patch_outside_the_root_leaves_no_current_patch) {
+    const std::filesystem::path dataRoot =
+        std::filesystem::temp_directory_path() / "engine-name-current-patch-outside-root";
+    std::filesystem::remove_all(dataRoot);
+    const synth::RuntimeDataPaths paths = synth::RuntimeDataPaths::FromDataRoot(dataRoot);
+    std::filesystem::create_directories(paths.patchesRoot);
+
+    const std::filesystem::path regularFile = paths.patchesRoot / "regular.txt";
+    {
+        std::ofstream out(regularFile, std::ios::binary);
+        out << "not a directory";
+    }
+
+    const std::filesystem::path outsideTarget =
+        std::filesystem::temp_directory_path() / "engine-name-current-patch-outside-root-target";
+    std::filesystem::remove_all(outsideTarget);
+    std::filesystem::create_directories(outsideTarget);
+    const std::filesystem::path linkOutside = paths.patchesRoot / "link-out";
+    std::error_code linkEc;
+    std::filesystem::create_directory_symlink(outsideTarget, linkOutside, linkEc);
+    REQUIRE_TRUE(!linkEc);
+
+    synth::Engine<EngineTestApp> engine([] { return std::uint64_t{0}; });
+    engine.SetRuntimeDataPaths(paths);
+    engine.Initialize();
+    engine.Prepare(48000.0, 32);
+
+    const std::vector<std::filesystem::path> refusedNames = {
+        std::filesystem::path("missing"), std::filesystem::path("regular.txt"),
+        std::filesystem::path("."),       std::filesystem::path(""),
+        std::filesystem::path("../x"),    std::filesystem::path("/etc"),
+        std::filesystem::path("link-out"),
+    };
+    for (const std::filesystem::path& name : refusedNames) {
+        REQUIRE_TRUE(!engine.NameCurrentPatch(name));
+        REQUIRE_TRUE(!engine.CurrentPatchRelativePath().has_value());
+        const synth::PatchCommandResult saveResult = engine.Patches().SavePatch();
+        REQUIRE_TRUE(saveResult.status == synth::PatchCommandStatus::NeedsSaveAsPath);
+    }
+
+    std::filesystem::remove_all(dataRoot);
+    std::filesystem::remove_all(outsideTarget);
+}
+
 TEST_CASE(engine_relaunch_reopens_the_patch_version_last_opened_even_when_a_newer_version_exists) {
     const std::filesystem::path dataRoot =
         std::filesystem::temp_directory_path() / "engine-relaunch-reopens-recorded-version";

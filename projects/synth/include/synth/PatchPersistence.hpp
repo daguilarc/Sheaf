@@ -274,6 +274,16 @@ public:
     const std::optional<std::filesystem::path>& CurrentPatchDirectory() const { return currentPatchDirectory_; }
     bool HasPendingSave() const { return pendingSave_.has_value(); }
 
+    // Records directory as the current patch directory without pushing any
+    // patch message, and without touching pendingSave_, heldSave_ or an
+    // outstanding snapshot request. A host names its restored current patch
+    // this way (Engine::NameCurrentPatch), which has already resolved and
+    // validated directory; this setter trusts its caller and does no
+    // validation of its own.
+    void SetCurrentPatchDirectory(std::optional<std::filesystem::path> directory) {
+        currentPatchDirectory_ = std::move(directory);
+    }
+
     PatchCommandResult NewPatch();
     PatchCommandResult SavePatch();
     PatchCommandResult SavePatchAs(const std::filesystem::path& patchDir);

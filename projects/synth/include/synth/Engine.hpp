@@ -17,6 +17,7 @@
 #include "synth/MidiController.hpp"
 #include "synth/MasterClock.hpp"
 #include "synth/ParameterModulation.hpp"
+#include "synth/PatchBrowser.hpp"
 #include "synth/PatchPersistence.hpp"
 #include "synth/RuntimeUIState.hpp"
 
@@ -871,6 +872,59 @@ public:
             RecordPatchVersionAndSave(std::filesystem::path{});
         }
         return result;
+    }
+
+    // A host restoring its own saved state (spp-15) names which patch is
+    // current without loading it, so the next Save adds a version to it.
+    // relative is resolved against dataPaths_.patchesRoot with the same
+    // containment PatchBrowser::ResolveLoadPath applies to a Load (no
+    // absolute path, no ".." component, an existing directory, a symbolic
+    // link that stays inside the root); a result equal to the root itself is
+    // also refused. An empty optional or any refusal leaves no current
+    // patch. Pushes no patch message either way and never touches an
+    // outstanding save or snapshot request. Returns whether a patch is now
+    // current.
+    bool NameCurrentPatch(std::optional<std::filesystem::path> relative) {
+        std::optional<std::filesystem::path> resolved;
+        if (relative.has_value()) {
+            PatchBrowser browser(dataPaths_.patchesRoot);
+            resolved = browser.ResolveLoadPath(*relative);
+            if (resolved.has_value()) {
+                std::error_code rootEc;
+                std::error_code resolvedEc;
+                const std::filesystem::path canonicalRoot =
+                    std::filesystem::weakly_canonical(dataPaths_.patchesRoot, rootEc);
+                const std::filesystem::path canonicalResolved =
+                    std::filesystem::weakly_canonical(*resolved, resolvedEc);
+                if (rootEc || resolvedEc || canonicalResolved == canonicalRoot) {
+                    resolved.reset();
+                } else if (resolved->filename().empty()) {
+                    // A trailing separator (e.g. "p/") leaves filename()
+                    // empty; parent_path() drops it without touching the
+                    // directory it names.
+                    resolved = resolved->parent_path();
+                }
+            }
+        }
+        patchManager_.SetCurrentPatchDirectory(resolved);
+        return resolved.has_value();
+    }
+
+    // The current patch directory (PatchManager::CurrentPatchDirectory())
+    // relative to dataPaths_.patchesRoot, with '/' separators regardless of
+    // platform, for a host to persist across relaunches or DAW projects;
+    // nullopt when there is no current patch.
+    std::optional<std::string> CurrentPatchRelativePath() const {
+        const std::optional<std::filesystem::path>& current = patchManager_.CurrentPatchDirectory();
+        if (!current.has_value()) {
+            return std::nullopt;
+        }
+        std::error_code ec;
+        const std::filesystem::path relative = std::filesystem::relative(*current, dataPaths_.patchesRoot, ec);
+        if (ec || relative.empty()) {
+            return std::nullopt;
+        }
+        return relative.generic_string();
     }
 
     // Number of per-controller processor chains currently built --
