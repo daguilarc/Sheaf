@@ -1790,6 +1790,17 @@ void Parameter::HandleSetAbsolute(const SceneState& scene, float normalizedTarge
 
 void Parameter::RandomizeVisibleValue(const SceneState& scene, float normalized) {
     ValidateSceneEndpoints(scene);
+    if (id_ == kLocalParameterId && config_.modulationTargetKind == ModulationTargetKind::kOneWayAmount) {
+        // A depth child of a one-way amount target draws only from the upper
+        // half of raw storage ([0.5, 1]) -- the half that resolves to a
+        // strictly positive depth -- so a Randomize press keeps attaching a
+        // live route at the same rate MANUAL.md already advertises for every
+        // other parameter, rather than silently doubling the "off" rate.
+        // Does not apply to the target's own top-level value (real id_,
+        // never kLocalParameterId), whose Randomize draw is an ordinary
+        // full-range amount.
+        normalized = 0.5f + 0.5f * std::clamp(normalized, 0.0f, 1.0f);
+    }
     const float target = LinearMap(RangeMin(config_.range), RangeMax(config_.range),
                                    std::clamp(normalized, 0.0f, 1.0f));
     Compute(scene);

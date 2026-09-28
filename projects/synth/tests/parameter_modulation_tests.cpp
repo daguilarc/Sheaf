@@ -3157,6 +3157,64 @@ TEST_CASE(one_way_amount_floor_is_a_noop_for_kbipolar_parameters) {
     REQUIRE_NEAR(depth->SceneCenter(0), 0.05f, 0.0001f);
 }
 
+TEST_CASE(one_way_amount_randomize_draw_lands_in_the_upper_half_of_raw_storage) {
+    synth::ParameterManager manager;
+    auto& group = manager.CreateGroup({
+        .numVoices = 1,
+        .numModulators = 1,
+        .numScenes = 1,
+        .maxParameters = 3,
+        .processLiteAlpha = 1.0f,
+        .targetCenterAlpha = 1.0f,
+        .modulationBlendMode = synth::ModulationBlendMode::kAttenuverter,
+    });
+    float source0 = 0.0f;
+    std::array<float*, 1> src0{&source0};
+    group.SetModulationSource(0, src0, {.connected = true});
+
+    auto& carrier = manager.CreateParameter(group, {
+        .name = "Carrier",
+        .defaultValue = 0.3f,
+        .modulationTargetKind = synth::ModulationTargetKind::kOneWayAmount,
+    });
+    synth::Parameter* depth = carrier.EnsureModulationDepth(0);
+    REQUIRE_TRUE(depth != nullptr);
+
+    const synth::SceneState scene{.leftScene = 0, .rightScene = 0, .blend = 0.0f};
+
+    // The worst-case draw (0.0) remaps into the floor of the remapped range,
+    // not the un-remapped 0.0: raw storage lands at exactly 0.5 (off), and
+    // resolves to depth 0 at that floor.
+    depth->RandomizeVisibleValue(scene, 0.0f);
+    REQUIRE_NEAR(depth->SceneCenter(0), 0.5f, 0.0005f);
+    carrier.Compute(scene);
+    carrier.ProcessLite();
+    group.GetModulators().Value(0, 0) = 1.0f;
+    REQUIRE_NEAR(carrier.GetRaw(0), 0.3f, 0.0005f);
+
+    // A midpoint draw (0.5) lands raw 0.75 and resolves to a strictly
+    // positive depth.
+    depth->RandomizeVisibleValue(scene, 0.5f);
+    REQUIRE_NEAR(depth->SceneCenter(0), 0.75f, 0.0005f);
+    carrier.Compute(scene);
+    carrier.ProcessLite();
+    REQUIRE_TRUE(carrier.GetRaw(0) > 0.3f + 0.0005f);
+
+    // The top-level target's OWN Randomize draw (a real id_, not the depth
+    // sentinel) is untouched by the remap: the worst-case draw still lands
+    // at the un-remapped 0.0, and S1.5's floor (the identical id_ ==
+    // kLocalParameterId guard) never fires for it either. A solo parameter
+    // with no active modulation route isolates this from the depth route's
+    // own contribution above.
+    auto& soloTarget = manager.CreateParameter(group, {
+        .name = "SoloTarget",
+        .defaultValue = 0.4f,
+        .modulationTargetKind = synth::ModulationTargetKind::kOneWayAmount,
+    });
+    soloTarget.RandomizeVisibleValue(scene, 0.0f);
+    REQUIRE_NEAR(soloTarget.SceneCenter(0), 0.0f, 0.0005f);
+}
+
 TEST_CASE(nested_depth_route_reads_get_and_bypasses_slew) {
     synth::ParameterManager manager;
     manager.SetGestureCount(2);
