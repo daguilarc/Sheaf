@@ -250,9 +250,22 @@ public:
         if (config.numAudioInputs > 0) {
             const juce::String wantedInputName = juce::String(engine_.AudioDeviceSnapshot().inputDeviceName);
             if (wantedInputName.isNotEmpty() && IsEnumeratedInputDevice(wantedInputName)) {
-                if (ApplyInputDeviceSetup(wantedInputName, "startup")) {
-                    ApplyPreferredRateAndBlockSize();
-                }
+                // sar-43: request record permission before opening the
+                // persisted input. Desktop platforms grant at once
+                // (juce::RuntimePermissions' class doc comment), so this
+                // callback runs synchronously here and every existing
+                // startup check is unaffected; on Android a refusal leaves
+                // output running with no input opened (4.9).
+                juce::RuntimePermissions::request(
+                    juce::RuntimePermissions::recordAudio, [this, wantedInputName](bool granted) {
+                        if (!granted) {
+                            SetAudioStatus("Microphone access was not granted.");
+                            return;
+                        }
+                        if (ApplyInputDeviceSetup(wantedInputName, "startup")) {
+                            ApplyPreferredRateAndBlockSize();
+                        }
+                    });
             } else {
                 if (wantedInputName.isNotEmpty()) {
                     const juce::String message = "audio input device not found: " + wantedInputName;
@@ -421,15 +434,36 @@ public:
             return;
         }
 
-        if (!ApplyInputDeviceSetup(inputName, "selection")) {
+        // sar-43: an empty inputName opens no input device at all (this
+        // function's own doc comment above), so there is nothing to gate on
+        // record permission -- only a non-empty selection requests it.
+        // Desktop platforms grant at once (juce::RuntimePermissions' class
+        // doc comment), so `openSelectedInput` below runs synchronously and
+        // every existing input check (CheckMissingPersistedInputDevice,
+        // CheckInputRoutedSignal, etc.) is unaffected.
+        const auto openSelectedInput = [this, inputName](bool recordPermissionGranted) {
+            if (inputName.isNotEmpty() && !recordPermissionGranted) {
+                SetAudioStatus("Microphone access was not granted.");
+                SyncAudioSelection();
+                RefreshInputRoutedState();
+                return;
+            }
+            if (!ApplyInputDeviceSetup(inputName, "selection")) {
+                SyncAudioSelection();
+                RefreshInputRoutedState();
+                return;
+            }
+            ApplyPreferredRateAndBlockSize();
+            SetAudioStatus(inputName.isEmpty() ? "Audio In: System Default" : "Audio In: " + inputName);
             SyncAudioSelection();
             RefreshInputRoutedState();
+        };
+
+        if (inputName.isEmpty()) {
+            openSelectedInput(true);
             return;
         }
-        ApplyPreferredRateAndBlockSize();
-        SetAudioStatus(inputName.isEmpty() ? "Audio In: System Default" : "Audio In: " + inputName);
-        SyncAudioSelection();
-        RefreshInputRoutedState();
+        juce::RuntimePermissions::request(juce::RuntimePermissions::recordAudio, openSelectedInput);
     }
 
     // The current audio callback load, as a percentage. The shell's
@@ -575,7 +609,7 @@ private:
     // Recomputes and publishes the external-input-routed signal from
     // current device state. Routed iff the user-selected input device name
     // -- engine_.AudioDeviceSnapshot().inputDeviceName, the same persisted
-    // selection Start() applies at startup (:248-263) and
+    // selection Start() applies at startup (:248-276) and
     // ApplyAudioDeviceInputSelection/OnEngineAudioDeviceChanged apply live --
     // is non-empty AND matches deviceManager_'s CURRENTLY OPEN input device
     // (getAudioDeviceSetup().inputDeviceName, with a device actually current).
