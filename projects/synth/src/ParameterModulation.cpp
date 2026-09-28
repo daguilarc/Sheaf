@@ -319,6 +319,17 @@ bool OutsideRange(float value, RangeKind range) {
     return ClampToRange(value, range) != value;
 }
 
+// Dispatches to the one-way amount curve for a kOneWayAmount target, the
+// unchanged bipolar curve otherwise -- the single choke point both call
+// sites in Parameter::ComputeAtDepth route through, so a kBipolar target
+// (every app besides this one, and every non-opted-in Froggers parameter)
+// reads exactly what it read before this law existed.
+float ModulationDepthTargetForKind(ModulationTargetKind kind, float normalizedKnob) {
+    return kind == ModulationTargetKind::kOneWayAmount
+               ? OneWayModulationDepthTargetFromKnob(normalizedKnob)
+               : ModulationDepthTargetFromKnob(normalizedKnob);
+}
+
 float RangeMin(RangeKind) {
     return 0.0f;
 }
@@ -2277,7 +2288,8 @@ void Parameter::ComputeAtDepth(const SceneState& scene, std::size_t recursionDep
         bool targetNonNeutral = false;
         if (depthParameter != nullptr) {
             for (std::size_t voiceIx = 0; voiceIx < group_.Config().numVoices; ++voiceIx) {
-                if (std::fabs(ModulationDepthTargetFromKnob(depthParameter->GetRaw(voiceIx))) >
+                if (std::fabs(ModulationDepthTargetForKind(config_.modulationTargetKind,
+                                                            depthParameter->GetRaw(voiceIx))) >
                     kModulationNeutralTolerance) {
                     targetNonNeutral = true;
                     break;
@@ -2303,23 +2315,37 @@ void Parameter::ComputeAtDepth(const SceneState& scene, std::size_t recursionDep
         const std::size_t routeSlot = sourceRoutePositions_[sourceIx];
         for (std::size_t voiceIx = 0; voiceIx < group_.Config().numVoices; ++voiceIx) {
             targetDepths_[VoiceRouteIndex(voiceIx, routeSlot)] =
-                depthParameter == nullptr ? 0.0f
-                                          : ModulationDepthTargetFromKnob(depthParameter->GetRaw(voiceIx));
+                depthParameter == nullptr
+                    ? 0.0f
+                    : ModulationDepthTargetForKind(config_.modulationTargetKind, depthParameter->GetRaw(voiceIx));
         }
     }
 
     for (std::size_t voiceIx = 0; voiceIx < group_.Config().numVoices; ++voiceIx) {
         if (group_.Config().modulationBlendMode == ModulationBlendMode::kAttenuverter) {
             targetCenterScales_[voiceIx] = 1.0f;
+            const bool isOneWayAmount = config_.modulationTargetKind == ModulationTargetKind::kOneWayAmount;
 
             float normalizationOffset = 0.0f;
             float minContribution = 0.0f;
             float maxContribution = 0.0f;
             for (std::size_t routeSlot = 0; routeSlot < activeRouteCount_; ++routeSlot) {
                 const std::size_t sourceIx = RouteSourceIndex(routeSlot);
-                const bool restsAtZero = group_.GetModulators().Metadata(sourceIx).restsAtZero;
-                const float restPoint = restsAtZero ? 0.0f : 0.5f;
-                if (restsAtZero) {
+                const ModulatorMetadata& sourceMetadata = group_.GetModulators().Metadata(sourceIx);
+                float restPoint = 0.5f;
+                if (isOneWayAmount) {
+                    // The one-way law forces every active route's rest point
+                    // to zero and reads restsAtZero == true or == false
+                    // identically (design.md's "The law": ignores restsAtZero
+                    // altogether), and treats a disconnected source's own
+                    // route as contributing nothing, regardless of the depth
+                    // or the source's own stored value.
+                    restPoint = 0.0f;
+                    if (!sourceMetadata.connected) {
+                        targetDepths_[VoiceRouteIndex(voiceIx, routeSlot)] = 0.0f;
+                    }
+                } else if (sourceMetadata.restsAtZero) {
+                    restPoint = 0.0f;
                     targetDepths_[VoiceRouteIndex(voiceIx, routeSlot)] *= 0.5f;
                 }
                 const float depth = targetDepths_[VoiceRouteIndex(voiceIx, routeSlot)];
