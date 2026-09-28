@@ -192,6 +192,11 @@ struct ParameterProcessingObserver {
     std::size_t neutralCollectionPasses = 0;
 };
 
+enum class ModulationBlendMode {
+    kCrossfade,
+    kAttenuverter,
+};
+
 struct ParameterGroupConfig {
     std::size_t numVoices = 0;
     std::size_t numModulators = 0;
@@ -202,6 +207,7 @@ struct ParameterGroupConfig {
     std::size_t targetComputeIntervalSamples = kDefaultTargetComputeIntervalSamples;
     float uiDisplayCenterAlpha = kDefaultUiDisplayCenterAlpha;
     float uiDisplaySpreadAlpha = kDefaultUiDisplaySpreadAlpha;
+    ModulationBlendMode modulationBlendMode = ModulationBlendMode::kCrossfade;
 
     bool IsValid() const;
 };
@@ -257,6 +263,7 @@ struct ModulatorMetadata {
     Color sourceColor;
     synth::ui::Visualizer* visualizer = nullptr;
     bool connected = false;
+    bool restsAtZero = false;
 };
 
 struct GestureMetadata {
