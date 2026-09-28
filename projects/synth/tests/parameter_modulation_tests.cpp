@@ -2504,6 +2504,330 @@ TEST_CASE(ui_state_min_max_reports_full_range_when_modulation_is_overfull) {
     REQUIRE_NEAR(ui.maxValues[0].load(), 1.0f, 0.0001f);
 }
 
+// Inverts ModulationDepthTargetFromKnob (synth/ParameterModulation.hpp) so a
+// test can command an exact raw signed modulation depth by setting a depth
+// parameter's own knob (SceneCenter) to the value that curves to it -- the
+// same curve ComputeAtDepth's per-route target-depth line already applies
+// via depthParameter->GetRaw().
+float KnobForRawModulationDepth(float rawDepth) {
+    if (rawDepth == 0.0f) {
+        return 0.5f;
+    }
+    const float magnitude = std::fabs(rawDepth);
+    const float base = synth::kModulationDepthTargetBase;
+    const float bipolarAbs = std::log(magnitude * (base - 1.0f) + 1.0f) / std::log(base);
+    const float bipolar = std::copysign(bipolarAbs, rawDepth);
+    return 0.5f + 0.5f * bipolar;
+}
+
+TEST_CASE(attenuverter_center_scale_stays_one_regardless_of_depth) {
+    synth::ParameterManager manager;
+    auto& group = manager.CreateGroup({
+        .numVoices = 1,
+        .numModulators = 1,
+        .numScenes = 1,
+        .maxParameters = 2,
+        .processLiteAlpha = 1.0f,
+        .targetCenterAlpha = 1.0f,
+        .modulationBlendMode = synth::ModulationBlendMode::kAttenuverter,
+    });
+    float source0 = 0.0f;
+    std::array<float*, 1> src0{&source0};
+    group.SetModulationSource(0, src0, {.connected = true});
+
+    auto& carrier = manager.CreateParameter(group, {.name = "Carrier", .defaultValue = 0.5f});
+    synth::Parameter* depth = carrier.EnsureModulationDepth(0);
+    REQUIRE_TRUE(depth != nullptr);
+    depth->SceneCenter(0) = KnobForRawModulationDepth(1.0f);
+
+    carrier.Compute({.leftScene = 0, .rightScene = 0, .blend = 0.0f});
+
+    REQUIRE_NEAR(carrier.TargetCenterScale(0), 1.0f, 0.0001f);
+}
+
+TEST_CASE(attenuverter_normalization_offset_is_half_the_signed_depth_sum) {
+    synth::ParameterManager manager;
+    auto& group = manager.CreateGroup({
+        .numVoices = 1,
+        .numModulators = 2,
+        .numScenes = 1,
+        .maxParameters = 3,
+        .processLiteAlpha = 1.0f,
+        .targetCenterAlpha = 1.0f,
+        .modulationBlendMode = synth::ModulationBlendMode::kAttenuverter,
+    });
+    float source0 = 0.0f;
+    float source1 = 0.0f;
+    std::array<float*, 1> src0{&source0};
+    std::array<float*, 1> src1{&source1};
+    group.SetModulationSource(0, src0, {.connected = true});
+    group.SetModulationSource(1, src1, {.connected = true});
+
+    auto& carrier = manager.CreateParameter(group, {.name = "Carrier", .defaultValue = 0.5f});
+    synth::Parameter* depth0 = carrier.EnsureModulationDepth(0);
+    synth::Parameter* depth1 = carrier.EnsureModulationDepth(1);
+    REQUIRE_TRUE(depth0 != nullptr);
+    REQUIRE_TRUE(depth1 != nullptr);
+    depth0->SceneCenter(0) = KnobForRawModulationDepth(0.8f);
+    depth1->SceneCenter(0) = KnobForRawModulationDepth(0.6f);
+
+    carrier.Compute({.leftScene = 0, .rightScene = 0, .blend = 0.0f});
+
+    REQUIRE_NEAR(carrier.TargetNormalizationOffset(0), -0.7f, 0.0005f);
+    REQUIRE_NEAR(carrier.TargetDepthForSource(0, 0), 0.8f, 0.0005f);
+    REQUIRE_NEAR(carrier.TargetDepthForSource(0, 1), 0.6f, 0.0005f);
+}
+
+TEST_CASE(attenuverter_full_depth_swings_half_the_range_not_the_bare_source) {
+    synth::ParameterManager manager;
+    auto& group = manager.CreateGroup({
+        .numVoices = 1,
+        .numModulators = 1,
+        .numScenes = 1,
+        .maxParameters = 2,
+        .processLiteAlpha = 1.0f,
+        .targetCenterAlpha = 1.0f,
+        .modulationBlendMode = synth::ModulationBlendMode::kAttenuverter,
+    });
+    float source0 = 0.0f;
+    std::array<float*, 1> src0{&source0};
+    group.SetModulationSource(0, src0, {.connected = true});
+
+    auto& carrier = manager.CreateParameter(group, {.name = "Carrier", .defaultValue = 0.5f});
+    synth::Parameter* depth = carrier.EnsureModulationDepth(0);
+    REQUIRE_TRUE(depth != nullptr);
+    depth->SceneCenter(0) = KnobForRawModulationDepth(1.0f);
+
+    carrier.Compute({.leftScene = 0, .rightScene = 0, .blend = 0.0f});
+    carrier.ProcessLite();
+
+    // Full depth keeps the knob at full weight -- unlike kCrossfade, which
+    // hands the destination fully to the source (centerScale 0) at this
+    // exact weight sum and, at this test's own center/source values, would
+    // otherwise read the identical numbers below by coincidence.
+    REQUIRE_NEAR(carrier.TargetCenterScale(0), 1.0f, 0.0001f);
+
+    group.GetModulators().Value(0, 0) = 1.0f;
+    REQUIRE_NEAR(carrier.GetRaw(0), 1.0f, 0.0001f);
+
+    group.GetModulators().Value(0, 0) = 0.0f;
+    REQUIRE_NEAR(carrier.GetRaw(0), 0.0f, 0.0001f);
+
+    group.GetModulators().Value(0, 0) = 0.5f;
+    REQUIRE_NEAR(carrier.GetRaw(0), 0.5f, 0.0001f);
+}
+
+TEST_CASE(attenuverter_negative_depth_inverts_the_source) {
+    synth::ParameterManager manager;
+    auto& group = manager.CreateGroup({
+        .numVoices = 1,
+        .numModulators = 1,
+        .numScenes = 1,
+        .maxParameters = 2,
+        .processLiteAlpha = 1.0f,
+        .targetCenterAlpha = 1.0f,
+        .modulationBlendMode = synth::ModulationBlendMode::kAttenuverter,
+    });
+    float source0 = 0.0f;
+    std::array<float*, 1> src0{&source0};
+    group.SetModulationSource(0, src0, {.connected = true});
+
+    auto& carrier = manager.CreateParameter(group, {.name = "Carrier", .defaultValue = 0.5f});
+    synth::Parameter* depth = carrier.EnsureModulationDepth(0);
+    REQUIRE_TRUE(depth != nullptr);
+    depth->SceneCenter(0) = KnobForRawModulationDepth(-1.0f);
+
+    carrier.Compute({.leftScene = 0, .rightScene = 0, .blend = 0.0f});
+    carrier.ProcessLite();
+
+    REQUIRE_NEAR(carrier.TargetCenterScale(0), 1.0f, 0.0001f);
+
+    // center (0.5) cancels exactly against this route's own normalization
+    // offset, so GetRaw() - center reads that route's own contribution
+    // directly, with no clamp ambiguity (both readings land exactly on a
+    // range endpoint, never past it).
+    group.GetModulators().Value(0, 0) = 1.0f;
+    REQUIRE_NEAR(carrier.GetRaw(0) - 0.5f, -0.5f, 0.0005f);
+
+    group.GetModulators().Value(0, 0) = 0.0f;
+    REQUIRE_NEAR(carrier.GetRaw(0) - 0.5f, 0.5f, 0.0005f);
+}
+
+TEST_CASE(attenuverter_dynamic_min_max_is_the_swings_reach) {
+    synth::ParameterManager manager;
+    auto& group = manager.CreateGroup({
+        .numVoices = 1,
+        .numModulators = 1,
+        .numScenes = 1,
+        .maxParameters = 2,
+        .processLiteAlpha = 1.0f,
+        .targetCenterAlpha = 1.0f,
+        .modulationBlendMode = synth::ModulationBlendMode::kAttenuverter,
+    });
+    float source0 = 0.0f;
+    std::array<float*, 1> src0{&source0};
+    group.SetModulationSource(0, src0, {.connected = true});
+
+    auto& carrier = manager.CreateParameter(group, {.name = "Carrier", .defaultValue = 0.5f});
+    synth::Parameter* depth = carrier.EnsureModulationDepth(0);
+    REQUIRE_TRUE(depth != nullptr);
+    depth->SceneCenter(0) = KnobForRawModulationDepth(0.4f);
+
+    carrier.Compute({.leftScene = 0, .rightScene = 0, .blend = 0.0f});
+    carrier.ProcessLite();
+
+    // At this test's own center (0.5), kCrossfade's weighted-average min/max
+    // happens to land on the identical 0.3/0.7 numbers below by coincidence
+    // (center*(1-weightSum) reduces to center-0.5*weightSum only because
+    // center is exactly 0.5); the center scale does not coincide.
+    REQUIRE_NEAR(carrier.TargetCenterScale(0), 1.0f, 0.0001f);
+
+    synth::Parameter::UIState ui(1);
+    carrier.PopulateUIState(ui);
+    REQUIRE_NEAR(ui.minValues[0].load(), 0.3f, 0.0005f);
+    REQUIRE_NEAR(ui.maxValues[0].load(), 0.7f, 0.0005f);
+}
+
+TEST_CASE(attenuverter_reach_clamps_to_the_parameter_range) {
+    synth::ParameterManager manager;
+    auto& group = manager.CreateGroup({
+        .numVoices = 1,
+        .numModulators = 1,
+        .numScenes = 1,
+        .maxParameters = 2,
+        .processLiteAlpha = 1.0f,
+        .targetCenterAlpha = 1.0f,
+        .modulationBlendMode = synth::ModulationBlendMode::kAttenuverter,
+    });
+    float source0 = 0.0f;
+    std::array<float*, 1> src0{&source0};
+    group.SetModulationSource(0, src0, {.connected = true});
+
+    auto& carrier = manager.CreateParameter(group, {.name = "Carrier", .defaultValue = 0.8f});
+    synth::Parameter* depth = carrier.EnsureModulationDepth(0);
+    REQUIRE_TRUE(depth != nullptr);
+    depth->SceneCenter(0) = KnobForRawModulationDepth(1.0f);
+
+    carrier.Compute({.leftScene = 0, .rightScene = 0, .blend = 0.0f});
+    carrier.ProcessLite();
+
+    synth::Parameter::UIState ui(1);
+    carrier.PopulateUIState(ui);
+    REQUIRE_NEAR(ui.maxValues[0].load(), 1.0f, 0.0005f);
+    REQUIRE_NEAR(ui.minValues[0].load(), 0.3f, 0.0005f);
+}
+
+TEST_CASE(attenuverter_rest_at_zero_source_contributes_nothing_at_its_own_rest) {
+    synth::ParameterManager manager;
+    auto& group = manager.CreateGroup({
+        .numVoices = 1,
+        .numModulators = 2,
+        .numScenes = 1,
+        .maxParameters = 8,
+        .processLiteAlpha = 1.0f,
+        .targetCenterAlpha = 1.0f,
+        .modulationBlendMode = synth::ModulationBlendMode::kAttenuverter,
+    });
+    float restingEfSource = 0.0f;
+    float oppositeExtremeSource = 0.0f;
+    std::array<float*, 1> efSrc{&restingEfSource};
+    std::array<float*, 1> otherSrc{&oppositeExtremeSource};
+    group.SetModulationSource(0, efSrc, {.connected = true, .restsAtZero = true});
+    group.SetModulationSource(1, otherSrc, {.connected = true, .restsAtZero = false});
+
+    const std::array<float, 3> centers{0.0f, 0.5f, 1.0f};
+    for (std::size_t centerIx = 0; centerIx < centers.size(); ++centerIx) {
+        const float center = centers[centerIx];
+        auto& efCarrier = manager.CreateParameter(
+            group, {.name = "EfCarrier" + std::to_string(centerIx), .defaultValue = center});
+        synth::Parameter* efDepth = efCarrier.EnsureModulationDepth(0);
+        REQUIRE_TRUE(efDepth != nullptr);
+        efDepth->SceneCenter(0) = KnobForRawModulationDepth(1.0f);
+        efCarrier.Compute({.leftScene = 0, .rightScene = 0, .blend = 0.0f});
+        efCarrier.ProcessLite();
+        group.GetModulators().Value(0, 0) = 0.0f;
+        REQUIRE_NEAR(efCarrier.GetRaw(0), center, 0.0005f);
+    }
+
+    // Contrast, at one center away from the lower clamp: the identical
+    // stored source value (0) means a different thing to a restsAtZero =
+    // false route, whose own rest is 0.5, not 0.0 -- it reads center - 0.5,
+    // not center, at that same stored value.
+    auto& defaultCarrier = manager.CreateParameter(group, {.name = "DefaultCarrier", .defaultValue = 0.5f});
+    synth::Parameter* defaultDepth = defaultCarrier.EnsureModulationDepth(1);
+    REQUIRE_TRUE(defaultDepth != nullptr);
+    defaultDepth->SceneCenter(0) = KnobForRawModulationDepth(1.0f);
+    defaultCarrier.Compute({.leftScene = 0, .rightScene = 0, .blend = 0.0f});
+    defaultCarrier.ProcessLite();
+    group.GetModulators().Value(0, 1) = 0.0f;
+    REQUIRE_NEAR(defaultCarrier.GetRaw(0), 0.0f, 0.0005f);  // center (0.5) - 0.5
+}
+
+TEST_CASE(attenuverter_rest_at_half_source_contributes_nothing_at_its_own_rest) {
+    synth::ParameterManager manager;
+    auto& group = manager.CreateGroup({
+        .numVoices = 1,
+        .numModulators = 1,
+        .numScenes = 1,
+        .maxParameters = 2,
+        .processLiteAlpha = 1.0f,
+        .targetCenterAlpha = 1.0f,
+        .modulationBlendMode = synth::ModulationBlendMode::kAttenuverter,
+    });
+    float source0 = 0.0f;
+    std::array<float*, 1> src0{&source0};
+    group.SetModulationSource(0, src0, {.connected = true});
+
+    // A center away from 0.5 -- at center 0.5 with the source held at 0.5
+    // too, kCrossfade's weighted average of two equal endpoints (center and
+    // source) reads 0.5 regardless of weight, coinciding with the
+    // attenuverter result by construction rather than distinguishing it.
+    auto& carrier = manager.CreateParameter(group, {.name = "Carrier", .defaultValue = 0.7f});
+    synth::Parameter* depth = carrier.EnsureModulationDepth(0);
+    REQUIRE_TRUE(depth != nullptr);
+    depth->SceneCenter(0) = KnobForRawModulationDepth(1.0f);
+
+    carrier.Compute({.leftScene = 0, .rightScene = 0, .blend = 0.0f});
+    carrier.ProcessLite();
+
+    REQUIRE_NEAR(carrier.TargetCenterScale(0), 1.0f, 0.0001f);
+
+    group.GetModulators().Value(0, 0) = 0.5f;
+    REQUIRE_NEAR(carrier.GetRaw(0), 0.7f, 0.0005f);
+}
+
+TEST_CASE(attenuverter_rest_at_zero_source_reaches_only_half_the_range_at_full_signal) {
+    synth::ParameterManager manager;
+    auto& group = manager.CreateGroup({
+        .numVoices = 1,
+        .numModulators = 1,
+        .numScenes = 1,
+        .maxParameters = 2,
+        .processLiteAlpha = 1.0f,
+        .targetCenterAlpha = 1.0f,
+        .modulationBlendMode = synth::ModulationBlendMode::kAttenuverter,
+    });
+    float source0 = 0.0f;
+    std::array<float*, 1> src0{&source0};
+    group.SetModulationSource(0, src0, {.connected = true, .restsAtZero = true});
+
+    auto& carrier = manager.CreateParameter(group, {.name = "Carrier", .defaultValue = 0.0f});
+    synth::Parameter* depth = carrier.EnsureModulationDepth(0);
+    REQUIRE_TRUE(depth != nullptr);
+    depth->SceneCenter(0) = KnobForRawModulationDepth(1.0f);
+
+    carrier.Compute({.leftScene = 0, .rightScene = 0, .blend = 0.0f});
+    carrier.ProcessLite();
+
+    group.GetModulators().Value(0, 0) = 1.0f;
+    REQUIRE_NEAR(carrier.GetRaw(0), 0.5f, 0.0005f);
+
+    synth::Parameter::UIState ui(1);
+    carrier.PopulateUIState(ui);
+    REQUIRE_NEAR(ui.minValues[0].load(), 0.0f, 0.0005f);
+    REQUIRE_NEAR(ui.maxValues[0].load(), 0.5f, 0.0005f);
+}
+
 TEST_CASE(nested_depth_route_reads_get_and_bypasses_slew) {
     synth::ParameterManager manager;
     manager.SetGestureCount(2);

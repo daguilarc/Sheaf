@@ -2305,6 +2305,32 @@ void Parameter::ComputeAtDepth(const SceneState& scene, std::size_t recursionDep
     }
 
     for (std::size_t voiceIx = 0; voiceIx < group_.Config().numVoices; ++voiceIx) {
+        if (group_.Config().modulationBlendMode == ModulationBlendMode::kAttenuverter) {
+            targetCenterScales_[voiceIx] = 1.0f;
+
+            float normalizationOffset = 0.0f;
+            float minContribution = 0.0f;
+            float maxContribution = 0.0f;
+            for (std::size_t routeSlot = 0; routeSlot < activeRouteCount_; ++routeSlot) {
+                const std::size_t sourceIx = RouteSourceIndex(routeSlot);
+                const bool restsAtZero = group_.GetModulators().Metadata(sourceIx).restsAtZero;
+                const float restPoint = restsAtZero ? 0.0f : 0.5f;
+                if (restsAtZero) {
+                    targetDepths_[VoiceRouteIndex(voiceIx, routeSlot)] *= 0.5f;
+                }
+                const float depth = targetDepths_[VoiceRouteIndex(voiceIx, routeSlot)];
+                normalizationOffset -= depth * restPoint;
+                const float candidateA = depth * (0.0f - restPoint);
+                const float candidateB = depth * (1.0f - restPoint);
+                minContribution += std::min(candidateA, candidateB);
+                maxContribution += std::max(candidateA, candidateB);
+            }
+            targetNormalizationOffsets_[voiceIx] = normalizationOffset;
+            targetMinValues_[voiceIx] = ClampToRange(targetCenter_ + minContribution, config_.range);
+            targetMaxValues_[voiceIx] = ClampToRange(targetCenter_ + maxContribution, config_.range);
+            continue;
+        }
+
         float weightSum = 0.0f;
         for (std::size_t routeSlot = 0; routeSlot < activeRouteCount_; ++routeSlot) {
             weightSum += std::fabs(targetDepths_[VoiceRouteIndex(voiceIx, routeSlot)]);
