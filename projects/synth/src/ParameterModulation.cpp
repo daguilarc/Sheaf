@@ -1921,6 +1921,10 @@ ParameterConfig Parameter::ModulationDepthConfig(std::size_t modIx) const {
         .baseColor = modulator.sourceColor,
         .visualizer = modulator.visualizer,
         .indicatorColors = config_.indicatorColors,
+        // A depth Parameter inherits its ancestor's own target kind, so a
+        // depth-of-a-depth (recursively, through this same function) reads
+        // the identical kind its top-level target carries.
+        .modulationTargetKind = config_.modulationTargetKind,
     };
 }
 
