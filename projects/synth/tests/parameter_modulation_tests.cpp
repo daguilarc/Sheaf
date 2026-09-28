@@ -2828,6 +2828,42 @@ TEST_CASE(attenuverter_rest_at_zero_source_reaches_only_half_the_range_at_full_s
     REQUIRE_NEAR(ui.maxValues[0].load(), 0.5f, 0.0005f);
 }
 
+// This test exists to prove the "no new branching for recursion" claim in
+// design.md §2 rather than to drive new production code: a modulation-depth
+// Parameter is always materialized into its parent's own ParameterGroup
+// (Parameter::EnsureModulationDepth/AssignModulationDepth), so a
+// depth-of-a-depth lands in the identical group, and therefore under the
+// identical modulationBlendMode, as its top-level ancestor, with no
+// additional per-parameter configuration.
+TEST_CASE(nested_depth_inherits_its_parents_attenuverter_mode) {
+    synth::ParameterManager manager;
+    auto& group = manager.CreateGroup({
+        .numVoices = 1,
+        .numModulators = 1,
+        .numScenes = 1,
+        .maxParameters = 3,
+        .processLiteAlpha = 1.0f,
+        .targetCenterAlpha = 1.0f,
+        .modulationBlendMode = synth::ModulationBlendMode::kAttenuverter,
+    });
+    float source0 = 0.0f;
+    std::array<float*, 1> src0{&source0};
+    group.SetModulationSource(0, src0, {.connected = true});
+
+    auto& topLevel = manager.CreateParameter(group, {.name = "TopLevel", .defaultValue = 0.5f});
+    synth::Parameter* depth = topLevel.EnsureModulationDepth(0);
+    REQUIRE_TRUE(depth != nullptr);
+    synth::Parameter* nestedDepth = depth->EnsureModulationDepth(0);
+    REQUIRE_TRUE(nestedDepth != nullptr);
+
+    REQUIRE_TRUE(&depth->Group() == &topLevel.Group());
+    REQUIRE_TRUE(&nestedDepth->Group() == &topLevel.Group());
+
+    topLevel.Compute({.leftScene = 0, .rightScene = 0, .blend = 0.0f});
+
+    REQUIRE_NEAR(nestedDepth->TargetCenterScale(0), 1.0f, 0.0001f);
+}
+
 TEST_CASE(nested_depth_route_reads_get_and_bypasses_slew) {
     synth::ParameterManager manager;
     manager.SetGestureCount(2);
