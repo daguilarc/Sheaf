@@ -2908,6 +2908,137 @@ TEST_CASE(one_way_amount_nested_depth_of_depth_inherits_the_one_way_law) {
     REQUIRE_TRUE(nestedDepth->TargetKind() == synth::ModulationTargetKind::kOneWayAmount);
 }
 
+TEST_CASE(one_way_amount_target_adds_reach_and_ignores_disconnected_sources) {
+    synth::ParameterManager manager;
+    auto& group = manager.CreateGroup({
+        .numVoices = 1,
+        .numModulators = 1,
+        .numScenes = 1,
+        .maxParameters = 2,
+        .processLiteAlpha = 1.0f,
+        .targetCenterAlpha = 1.0f,
+        .modulationBlendMode = synth::ModulationBlendMode::kAttenuverter,
+    });
+    float source0 = 0.0f;
+    std::array<float*, 1> src0{&source0};
+    group.SetModulationSource(0, src0, {.connected = true});
+
+    auto& carrier = manager.CreateParameter(group, {
+        .name = "Carrier",
+        .defaultValue = 0.3f,
+        .modulationTargetKind = synth::ModulationTargetKind::kOneWayAmount,
+    });
+    synth::Parameter* depth = carrier.EnsureModulationDepth(0);
+    REQUIRE_TRUE(depth != nullptr);
+    depth->SceneCenter(0) = KnobForRawModulationDepth(0.6f);
+
+    carrier.Compute({.leftScene = 0, .rightScene = 0, .blend = 0.0f});
+    carrier.ProcessLite();
+    group.GetModulators().Value(0, 0) = 0.8f;
+    REQUIRE_NEAR(carrier.GetRaw(0), 0.78f, 0.0005f);
+
+    // Disconnect the source: the route reads 0 regardless of its own stored
+    // value (still 0.8) or the depth that was set -- the knob alone comes
+    // back, unchanged.
+    group.GetModulators().Metadata(0).connected = false;
+    carrier.Compute({.leftScene = 0, .rightScene = 0, .blend = 0.0f});
+    carrier.ProcessLite();
+    REQUIRE_NEAR(carrier.GetRaw(0), 0.3f, 0.0005f);
+}
+
+TEST_CASE(one_way_amount_two_routes_add_independently_and_clamp_to_the_top) {
+    synth::ParameterManager manager;
+    auto& group = manager.CreateGroup({
+        .numVoices = 1,
+        .numModulators = 2,
+        .numScenes = 1,
+        .maxParameters = 6,
+        .processLiteAlpha = 1.0f,
+        .targetCenterAlpha = 1.0f,
+        .modulationBlendMode = synth::ModulationBlendMode::kAttenuverter,
+    });
+    float source0 = 0.0f;
+    float source1 = 0.0f;
+    std::array<float*, 1> src0{&source0};
+    std::array<float*, 1> src1{&source1};
+    group.SetModulationSource(0, src0, {.connected = true});
+    group.SetModulationSource(1, src1, {.connected = true, .restsAtZero = true});
+
+    // Two routes add independently: knob 0.3, depth 0.5 at source 1.0, depth
+    // 0.3 at a resting envelope follower reading source 0.0.
+    auto& sumCarrier = manager.CreateParameter(group, {
+        .name = "SumCarrier",
+        .defaultValue = 0.3f,
+        .modulationTargetKind = synth::ModulationTargetKind::kOneWayAmount,
+    });
+    synth::Parameter* sumDepth0 = sumCarrier.EnsureModulationDepth(0);
+    synth::Parameter* sumDepth1 = sumCarrier.EnsureModulationDepth(1);
+    REQUIRE_TRUE(sumDepth0 != nullptr);
+    REQUIRE_TRUE(sumDepth1 != nullptr);
+    sumDepth0->SceneCenter(0) = KnobForRawModulationDepth(0.5f);
+    sumDepth1->SceneCenter(0) = KnobForRawModulationDepth(0.3f);
+    sumCarrier.Compute({.leftScene = 0, .rightScene = 0, .blend = 0.0f});
+    sumCarrier.ProcessLite();
+    group.GetModulators().Value(0, 0) = 1.0f;
+    group.GetModulators().Value(0, 1) = 0.0f;
+    REQUIRE_NEAR(sumCarrier.GetRaw(0), 0.8f, 0.0005f);
+
+    // Two full-depth routes summing past the range's top: knob 0.2, depth
+    // 0.5 at source 1.0 and depth 0.4 at source 1.0 -- clamped to 1.0, with
+    // neither route's own stored depth renormalized by the other's presence.
+    auto& clampCarrier = manager.CreateParameter(group, {
+        .name = "ClampCarrier",
+        .defaultValue = 0.2f,
+        .modulationTargetKind = synth::ModulationTargetKind::kOneWayAmount,
+    });
+    synth::Parameter* clampDepth0 = clampCarrier.EnsureModulationDepth(0);
+    synth::Parameter* clampDepth1 = clampCarrier.EnsureModulationDepth(1);
+    REQUIRE_TRUE(clampDepth0 != nullptr);
+    REQUIRE_TRUE(clampDepth1 != nullptr);
+    clampDepth0->SceneCenter(0) = KnobForRawModulationDepth(0.5f);
+    clampDepth1->SceneCenter(0) = KnobForRawModulationDepth(0.4f);
+    clampCarrier.Compute({.leftScene = 0, .rightScene = 0, .blend = 0.0f});
+    clampCarrier.ProcessLite();
+    group.GetModulators().Value(0, 0) = 1.0f;
+    group.GetModulators().Value(0, 1) = 1.0f;
+    REQUIRE_NEAR(clampCarrier.GetRaw(0), 1.0f, 0.0005f);
+    REQUIRE_NEAR(clampCarrier.TargetDepthForSource(0, 0), 0.5f, 0.0005f);
+    REQUIRE_NEAR(clampCarrier.TargetDepthForSource(0, 1), 0.4f, 0.0005f);
+}
+
+TEST_CASE(one_way_amount_ignores_restsatzero_and_reads_the_route_directly) {
+    synth::ParameterManager manager;
+    auto& group = manager.CreateGroup({
+        .numVoices = 1,
+        .numModulators = 1,
+        .numScenes = 1,
+        .maxParameters = 2,
+        .processLiteAlpha = 1.0f,
+        .targetCenterAlpha = 1.0f,
+        .modulationBlendMode = synth::ModulationBlendMode::kAttenuverter,
+    });
+    float source0 = 0.0f;
+    std::array<float*, 1> src0{&source0};
+    group.SetModulationSource(0, src0, {.connected = true, .restsAtZero = true});
+
+    auto& carrier = manager.CreateParameter(group, {
+        .name = "Carrier",
+        .defaultValue = 0.0f,
+        .modulationTargetKind = synth::ModulationTargetKind::kOneWayAmount,
+    });
+    synth::Parameter* depth = carrier.EnsureModulationDepth(0);
+    REQUIRE_TRUE(depth != nullptr);
+    depth->SceneCenter(0) = KnobForRawModulationDepth(1.0f);
+
+    carrier.Compute({.leftScene = 0, .rightScene = 0, .blend = 0.0f});
+    carrier.ProcessLite();
+    group.GetModulators().Value(0, 0) = 0.3f;
+    // NOT halved (unlike the bipolar law's own restsAtZero branch, which
+    // would read 0.15 at this same depth and source): the one-way law
+    // ignores restsAtZero and reads the route directly.
+    REQUIRE_NEAR(carrier.GetRaw(0), 0.3f, 0.0005f);
+}
+
 TEST_CASE(nested_depth_route_reads_get_and_bypasses_slew) {
     synth::ParameterManager manager;
     manager.SetGestureCount(2);
