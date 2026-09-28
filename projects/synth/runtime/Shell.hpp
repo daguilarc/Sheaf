@@ -43,6 +43,7 @@
 
 #include <juce_gui_extra/juce_gui_extra.h>
 
+#include <algorithm>
 #include <exception>
 #include <functional>
 #include <memory>
@@ -51,26 +52,78 @@
 
 namespace synth_runtime {
 
+// sprs-20: the shell no longer sizes its window to the composite (a phone-
+// width app root plus the sidebar can be far narrower than that composite,
+// see design.md section 2's "JUCE shell" note), so the pane can no longer
+// simply fill the shell's own bounds. Instead the pane is sized to the
+// larger of the shell and the last composite MainPane reports
+// (RuntimeMainComponent::ComposedBounds(), sprs-19) in each dimension,
+// scaled down (never up) so its width fits the shell, and wrapped in a
+// vertical-only juce::Viewport so a scaled-down composite that is still
+// taller than the shell scrolls rather than clips.
 template <synth::SynthApplication App>
 class ShellComponent : public juce::Component {
 public:
     explicit ShellComponent(Runtime<App>& runtime) : mainPane_(runtime) {
-        addAndMakeVisible(mainPane_);
+        viewport_.setViewedComponent(&mainPane_, false);
+        // Vertical scrolling only: the pane is always scaled to fit the
+        // shell's width exactly (scale = min(1, shell width / pane width)),
+        // so horizontal overflow never happens by construction.
+        viewport_.setScrollBarsShown(true, false);
+        // Every input source scrolls on drag (not just touch, JUCE's
+        // "nonHover" default) so a mouse-driven desktop shell scrolls too; a
+        // node that takes drags (a knob, an encoder) opts out with
+        // juce::Component::setViewportIgnoreDragFlag(true)
+        // (PortableJuceBackend.hpp's RetainedDrawComponent::SetNode), so a
+        // drag starting on it reaches the control instead of scrolling.
+        viewport_.setScrollOnDragMode(juce::Viewport::ScrollOnDragMode::all);
+        addAndMakeVisible(viewport_);
     }
 
     // Called by Runtime's timer-driven repaint hook (wired in the
     // application wrapper's initialise(), after Start()) once per UI frame.
+    // The composite can change between ticks with no shell resize at all --
+    // a self-sized app surface (sprs-19) dispatching a new declared width is
+    // the case that matters here -- so the pane is re-laid-out on every
+    // refresh, not only on resized().
     void RepaintAll() {
         mainPane_.RefreshOnTick();
+        LayoutMainPane();
         mainPane_.repaint();
     }
 
-    void resized() override { mainPane_.setBounds(getLocalBounds()); }
+    void resized() override {
+        viewport_.setBounds(getLocalBounds());
+        LayoutMainPane();
+    }
 
     MainPane<App>& GetMainPane() { return mainPane_; }
 
 private:
+    // Sizes and scales mainPane_ to fit the shell, then offers the shell's
+    // own bounds (sidebar-free) as the pane's content extent so an
+    // extent-aware app (sprs-13) tracks the actual window, not the pane's
+    // own (possibly stale or scaled) JUCE size. This runs the pane's
+    // resized() first (via setSize, offering the PANE's own bounds, wrong
+    // whenever pane != shell) and then corrects it: the last extent offered
+    // is always the shell's, per sprs-20.
+    void LayoutMainPane() {
+        const synth::ui::Bounds composite = mainPane_.ComposedBounds();
+        const float shellWidth = static_cast<float>(getWidth());
+        const float shellHeight = static_cast<float>(getHeight());
+        const float paneWidth = std::max(shellWidth, composite.width);
+        const float paneHeight = std::max(shellHeight, composite.height);
+        const float scale = paneWidth > 0.0f ? std::min(1.0f, shellWidth / paneWidth) : 1.0f;
+        mainPane_.setSize(static_cast<int>(paneWidth), static_cast<int>(paneHeight));
+        mainPane_.setTransform(juce::AffineTransform::scale(scale));
+        mainPane_.OfferContentExtent(synth_juce::JuceToUiBounds(getLocalBounds().toFloat()));
+    }
+
+    // Declared in this order so mainPane_ constructs before viewport_ needs
+    // to reference it, and so viewport_ (which holds a non-owning pointer
+    // to it) is destroyed first, in reverse declaration order.
     MainPane<App> mainPane_;
+    juce::Viewport viewport_;
 };
 
 template <synth::SynthApplication App>

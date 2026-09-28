@@ -16,6 +16,7 @@
 #include <juce_gui_basics/juce_gui_basics.h>
 
 #include <array>
+#include <cmath>
 #include <cstddef>
 #include <filesystem>
 #include <memory>
@@ -862,6 +863,104 @@ void CheckJuceAudioInputNegotiation() {
     std::filesystem::remove_all(parent);
 }
 
+// sprs-20: a shell narrower than the composite scales the pane down (never
+// up) to fit the shell's width exactly and scrolls vertically for whatever
+// height the scale leaves over; a shell at least as large as the composite
+// shows it at scale 1 with no scrollbar.
+void CheckNarrowShellFitsWidthAndScrolls(const std::filesystem::path& parent) {
+    const std::filesystem::path root = FreshRoot(parent, "narrow-shell");
+    synth_runtime::RuntimeShellSession<synth_miniapp::MiniApp> session(
+        synth::RuntimeDataPaths::FromRoots(root, root / "patches", root / "logs", root / "config"),
+        &RegisterFakeAudioDeviceType<synth_miniapp::MiniApp>);
+
+    juce::Viewport* viewport = FindViewport(session.Component());
+    Require(viewport != nullptr, "the shell wraps its pane in a scrolling viewport");
+    auto* mainPane =
+        dynamic_cast<synth_runtime::MainPane<synth_miniapp::MiniApp>*>(viewport->getViewedComponent());
+    Require(mainPane != nullptr, "the viewport's viewed component is the shell's own MainPane");
+
+    const synth::ui::Bounds composite = mainPane->ComposedBounds();
+    Require(composite.width == 996.0f && composite.height == 560.0f,
+            "the miniapp's fixed-size composite is config.uiWidth(900) + the 96px sidebar, 560 tall");
+
+    session.Component().setSize(412, 150);
+    const float expectedScale = 412.0f / 996.0f;
+    Require(std::abs(mainPane->getTransform().mat00 - expectedScale) < 0.001f,
+            "the pane is scaled to fit the shell's width exactly: 412 / 996");
+    const float scaledHeight = 560.0f * expectedScale;
+    Require(scaledHeight > 231.0f && scaledHeight < 233.0f,
+            "about 232 -- 560 scaled by 412/996, matching the design's own worked example");
+
+    viewport->setViewPosition(0, 1000000);
+    const int maxScroll = viewport->getViewPositionY();
+    Require(std::abs(static_cast<float>(maxScroll) - (scaledHeight - 150.0f)) <= 1.0f,
+            "the viewport's maximum vertical position is the scaled height less the shell height, "
+            "within a pixel");
+    Require(viewport->getVerticalScrollBar().isVisible(),
+            "the vertical scrollbar shows once the scaled composite overflows the shell");
+    Require(!viewport->getHorizontalScrollBar().isVisible(),
+            "no horizontal scrollbar is ever needed: the scale always fits the shell's width exactly");
+
+    session.Component().setSize(996, 560);
+    Require(std::abs(mainPane->getTransform().mat00 - 1.0f) < 0.001f,
+            "a shell at least as large as the composite shows it at scale 1");
+    Require(!viewport->getVerticalScrollBar().isVisible(),
+            "no scrollbar is needed once the shell fits the composite exactly");
+}
+
+// sprs-20: every input source scrolls the shell's viewport on drag, except a
+// node that takes drags itself (an encoder), which opts out via
+// juce::Component::setViewportIgnoreDragFlag (PortableJuceBackend.hpp's
+// RetainedDrawComponent::SetNode) -- the ancestor-chain flag
+// juce::Viewport's own drag-to-scroll listener checks
+// (doesMouseEventComponentBlockViewportDrag, juce_Viewport.cpp) before
+// scrolling on a gesture that started inside a given node.
+//
+// This checks that mechanism directly (the flag on each node, and the
+// viewport's own scroll-on-drag mode) rather than by driving a real OS mouse
+// gesture through juce::ComponentPeer::handleMouseEvent: a probe (this
+// task's own scratch work, not shipped) found that on this Mac's live
+// desktop session, JUCE's MouseInputSourceImpl re-resolves the "component
+// under the mouse" it uses to route drag events against the REAL, live
+// system cursor's screen position on every call, independently of the
+// position a synthetic peer event carries -- so a scripted gesture's
+// tracked target keeps getting reset out from under it and never reaches
+// the viewport's mouse-listener-based drag-to-scroll machinery here,
+// regardless of where the synthetic event claims to be. That is a property
+// of driving real OS input dispatch in a live, interactive desktop session,
+// not of this production change; the two facts below are what together
+// produce the scenario the header's check line describes.
+void CheckDragOnAControlDoesNotScroll(const std::filesystem::path& parent) {
+    const std::filesystem::path root = FreshRoot(parent, "drag-does-not-scroll");
+    synth_runtime::RuntimeShellSession<synth_miniapp::MiniApp> session(
+        synth::RuntimeDataPaths::FromRoots(root, root / "patches", root / "logs", root / "config"),
+        &RegisterFakeAudioDeviceType<synth_miniapp::MiniApp>);
+
+    juce::Viewport* viewport = FindViewport(session.Component());
+    Require(viewport != nullptr, "the shell wraps its pane in a scrolling viewport");
+    Require(viewport->getScrollOnDragMode() == juce::Viewport::ScrollOnDragMode::all,
+            "every input source scrolls the shell's viewport on drag, not only a non-hovering "
+            "one (JUCE's nonHover default), so a mouse-driven desktop shell scrolls too");
+
+    std::vector<synth_juce::PortableComponent*> renderers;
+    CollectPortableComponents(session.Component(), renderers);
+    Require(renderers.size() == 1, "the shell owns exactly one portable renderer");
+    synth_juce::PortableComponent& renderer = *renderers.front();
+
+    juce::Component* encoder = renderer.FindByNodeId(synth_miniapp::MiniAppNodeIds::Encoder(0));
+    Require(encoder != nullptr, "the app's first encoder (a node that takes drags) is discoverable");
+    Require(encoder->getViewportIgnoreDragFlag(),
+            "a node that takes drags opts out of the viewport's drag-to-scroll, so a drag "
+            "starting on it reaches the node instead of scrolling");
+
+    juce::Component* sidebarButton =
+        renderer.FindByNodeId(synth::runtime_ui::NodeIds::kSidebarAudio);
+    Require(sidebarButton != nullptr, "a plain sidebar button (takes no drags) is discoverable");
+    Require(!sidebarButton->getViewportIgnoreDragFlag(),
+            "a node that takes no drags does not opt out, so a drag starting elsewhere scrolls "
+            "the viewport");
+}
+
 }  // namespace
 
 int main() {
@@ -1216,6 +1315,33 @@ int main() {
             "CONTENT area the composition actually places beside the sidebar, not the pane's "
             "full composite footprint");
 
+    // sprs-20: shrinking the shell below its current composite (800 x 600,
+    // from the resize just above) offers the new, smaller extent AT ONCE --
+    // ShellComponent::LayoutMainPane() calls MainPane::OfferContentExtent()
+    // itself after every layout of the pane, regardless of whether the pane
+    // itself changed size (paneWidth/paneHeight are still the LARGER of the
+    // shell and the composite, so they do not shrink until the app resolves
+    // against the smaller extent and the composite itself shrinks). Only on
+    // the NEXT refresh, once ComposedBounds() reflects the app's new,
+    // smaller root, does the pane's own JUCE size (and scale) follow it.
+    auto* wiringShell =
+        dynamic_cast<synth_runtime::ShellComponent<WiringExtentAwareApp>*>(&wiringSession.Component());
+    Require(wiringShell != nullptr, "the wiring session's component is the typed shell component");
+    wiringSession.Component().setSize(600, 400);
+    Require(wiringSurface->extent.width == 504.0f && wiringSurface->extent.height == 400.0f,
+            "the offered content extent becomes 504 x 400 at once: the 600-wide shell less the "
+            "96px sidebar, regardless of the pane's own (still 800 x 600) JUCE size");
+    Require(wiringShell->GetMainPane().ComposedBounds().width == 600.0f &&
+                wiringShell->GetMainPane().ComposedBounds().height == 400.0f,
+            "the app already resolved against the new extent, so the composite itself is "
+            "already 600 x 400 (504 + the 96px sidebar) even though the pane's JUCE size has "
+            "not caught up yet");
+    wiringShell->RepaintAll();
+    Require(wiringShell->GetMainPane().getWidth() == 600 && wiringShell->GetMainPane().getHeight() == 400,
+            "after one refresh the pane's own JUCE size follows the now-current composite: 600 x 400");
+    Require(std::abs(wiringShell->GetMainPane().getTransform().mat00 - 1.0f) < 0.001f,
+            "the shell (600 wide) is exactly the composite's width, so the scale is 1");
+
     {
         auto owner = synth_runtime::MakeRuntimeSessionOwner<synth_miniapp::MiniApp>(
             paths, &RegisterFakeAudioDeviceType<synth_miniapp::MiniApp>);
@@ -1234,6 +1360,13 @@ int main() {
     }
 
     CheckJuceAudioInputNegotiation();
+
+    const std::filesystem::path shellParent =
+        std::filesystem::temp_directory_path() / "sheaf-runtime-shell-scroll-test";
+    std::filesystem::remove_all(shellParent);
+    CheckNarrowShellFitsWidthAndScrolls(shellParent);
+    CheckDragOnAControlDoesNotScroll(shellParent);
+    std::filesystem::remove_all(shellParent);
 
     return 0;
 }

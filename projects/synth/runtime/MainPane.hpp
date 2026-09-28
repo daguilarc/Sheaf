@@ -72,43 +72,53 @@ public:
 
     void resized() override
     {
-        // Feed the pane's live JUCE
-        // bounds to the shell before the next RefreshFromSurface() rebuilds
-        // the tree, so an ExtentAwareSurface app is offered the real window
-        // size instead of only ever resolving at its compiled-in default.
-        // mainComponent_ is held directly (not through a `ui::Surface&`), so
-        // this calls its existing public SetContentExtent() setter with no
-        // dynamic_cast/interface needed at this layer.
-        //
-        // The pane's own bounds are
-        // the composite footprint (app content + the runtime sidebar strip
-        // placed beside it, RuntimeMainComponent::BuildTree()), not the
-        // app's content area alone. Offering the full pane width let an
-        // extent-aware app resolve as wide as the whole pane, which then
-        // placed the sidebar at that same width -- past the pane's own
-        // right edge, clipped off-screen. The offered extent is the app
-        // CONTENT area: pane bounds with the sidebar's width subtracted,
-        // height unchanged -- matching liveContentExtent_'s sidebar-free
-        // constructor-time default (RuntimeMainComponent's constructor) and
-        // the composition's own layout (content root sits at x 0, sidebar
-        // root at x == resolved app width, in RuntimeMainComponent::BuildTree()).
-        // A pane narrower than the sidebar floors at width 0 rather than going
-        // negative, the same inset-then-floor idiom already used for
-        // exactly this "extent minus a fixed inset" shape elsewhere in this
-        // codebase (e.g. `std::max(0.0f, containerExtent - padding * 2.0f)`
-        // in AllocateExtents, ResolveCrossExtent, and IntrinsicForWrappingRow
-        // in PortableUILayout.hpp) -- not a new clamping rule.
-        synth::ui::Bounds contentExtent = synth_juce::JuceToUiBounds(getLocalBounds().toFloat());
-        contentExtent.width =
-            std::max(0.0f, contentExtent.width - synth::runtime_ui::Layout::kSidebarWidth);
-        mainComponent_.SetContentExtent(contentExtent);
+        // The pane's own bounds, offered as the content extent below via
+        // OfferContentExtent() -- this is the ONLY thing a host with no
+        // shell (the plugin editor, `app/vst/FroggersPluginEditor.hpp`) ever
+        // offers, since nothing else calls SetContentExtent() for it. A
+        // host with a shell (ShellComponent, sprs-20) also calls
+        // OfferContentExtent() itself, with ITS OWN bounds, immediately
+        // after every layout of the pane -- overriding whatever this call
+        // offers, since the pane's own bounds are no longer the shell's once
+        // the pane can be scaled or larger than the shell.
         renderer_.setBounds(getLocalBounds());
+        OfferContentExtent(synth_juce::JuceToUiBounds(getLocalBounds().toFloat()));
+    }
+
+    // Offers `area` as the app surface's live content extent (see
+    // RuntimeMainComponent::SetContentExtent()) and refreshes the renderer
+    // against it. `area` is the CONTENT area a caller wants the app to
+    // resolve against; the runtime sidebar's fixed width is subtracted here
+    // (not by the caller) so every caller states its own bounds in the same
+    // terms -- matching liveContentExtent_'s sidebar-free constructor-time
+    // default (RuntimeMainComponent's constructor) and the composition's own
+    // layout (content root sits at x 0, sidebar root at x == resolved app
+    // width, in RuntimeMainComponent::BuildTree()). An area narrower than
+    // the sidebar floors at width 0 rather than going negative, the same
+    // inset-then-floor idiom already used for exactly this "extent minus a
+    // fixed inset" shape elsewhere in this codebase (e.g.
+    // `std::max(0.0f, containerExtent - padding * 2.0f)` in AllocateExtents,
+    // ResolveCrossExtent, and IntrinsicForWrappingRow in
+    // PortableUILayout.hpp) -- not a new clamping rule.
+    void OfferContentExtent(synth::ui::Bounds area)
+    {
+        area.width = std::max(0.0f, area.width - synth::runtime_ui::Layout::kSidebarWidth);
+        mainComponent_.SetContentExtent(area);
         renderer_.RefreshFromSurface();
     }
 
     synth::ui::Bounds IntrinsicBounds() const
     {
         return mainComponent_.IntrinsicBounds();
+    }
+
+    // The bounds of the composite root the last RefreshFromSurface() /
+    // BuildTree() call produced (RuntimeMainComponent::ComposedBounds(),
+    // sprs-19/20): what a host lays itself out around instead of always
+    // IntrinsicBounds()'s compiled-in size.
+    synth::ui::Bounds ComposedBounds() const
+    {
+        return mainComponent_.ComposedBounds();
     }
 
     bool NeedsDeferredRendererRefresh(const synth::ui::Action& action) const

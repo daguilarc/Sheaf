@@ -546,6 +546,13 @@ private:
             // nothing, so sru-25's translucent visualizer underlays keep passing
             // clicks through to the encoders beneath them.
             setInterceptsMouseClicks(acceptsClick_ || acceptsDrag_ || acceptsDoubleClick_, false);
+            // sprs-20: a host that wraps its shell in a scrolling
+            // juce::Viewport (Shell.hpp's ShellComponent) enables scroll-on-
+            // drag for every input source, so a plain drag anywhere would
+            // otherwise also scroll the view out from under a node that is
+            // itself being dragged (an encoder). This node takes drags iff
+            // acceptsDrag_, so it -- and only it -- opts out.
+            setViewportIgnoreDragFlag(acceptsDrag_);
             repaint();
         }
 
