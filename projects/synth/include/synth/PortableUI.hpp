@@ -306,6 +306,26 @@ public:
     virtual void SetContentExtent(Bounds extent) = 0;
 };
 
+// Optional capability (sprs-19): a Surface that declares its own root
+// bounds for the next BuildTree() call, instead of resolving against the
+// configured or offered size, and may name a node of that same tree where
+// the runtime sidebar should be placed. Detected the same dynamic_cast idiom
+// as ExtentAwareSurface, for the same erasure reason (SynthApplication's
+// PortableSurface() accessor returns exactly `Surface&`).
+class SelfSizedSurface {
+public:
+    virtual ~SelfSizedSurface() = default;
+    // The bounds the next BuildTree() call's root will carry. The shared
+    // main component validates the built root against this instead of the
+    // configured or offered size.
+    virtual Bounds RootBounds() const = 0;
+    // The id of a node in the next BuildTree() call's output where the
+    // runtime sidebar root should be placed, or nullopt to place the
+    // sidebar at the app root's right edge as for a surface that does not
+    // implement this interface.
+    virtual std::optional<NodeId> SidebarSlot() const = 0;
+};
+
 inline DrawCommand DrawCommand::Fill(Color color) {
     DrawCommand command;
     command.kind = Kind::Fill;

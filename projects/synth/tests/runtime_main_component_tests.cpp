@@ -4,6 +4,7 @@
 
 #include <functional>
 #include <iostream>
+#include <optional>
 #include <stdexcept>
 #include <string>
 #include <type_traits>
@@ -295,6 +296,104 @@ struct ExtentAwareApp
     ExtentAwareAppSurface surface;
 };
 
+// A surface that additionally implements ui::SelfSizedSurface (sprs-19): it
+// declares its own root bounds (independent of App::Config()) and names a
+// slot node nested two levels deep -- "selfsized.app.bottom" at (0, 500)
+// relative to the root, itself containing "selfsized.app.slot" at (363, 0)
+// relative to that -- so a test that reads the slot's composite position
+// exercises summing parent-relative offsets across more than one level, not
+// just a direct child's own bounds. `declaredRootBounds` is separate from
+// the bounds the built tree's root actually carries so a test can make them
+// disagree; `includeSlot` and `slotWidth`/`slotHeight` let a test remove the
+// slot or shrink it below the sidebar's own size.
+class SelfSizedAppSurface final : public synth::ui::Surface, public synth::ui::SelfSizedSurface
+{
+public:
+    synth::ui::Bounds rootBounds{0.0f, 0.0f, 459.0f, 700.0f};
+    synth::ui::Bounds declaredRootBounds{0.0f, 0.0f, 459.0f, 700.0f};
+    float slotWidth = 96.0f;
+    float slotHeight = 200.0f;
+    bool includeSlot = true;
+
+    synth::ui::NodeTree BuildTree() override
+    {
+        synth::ui::Node root;
+        root.id = "selfsized.app.root";
+        root.kind = synth::ui::NodeKind::Root;
+        root.bounds = rootBounds;
+        root.children = {synth::ui::NodeId("selfsized.app.top"),
+                         synth::ui::NodeId("selfsized.app.bottom")};
+
+        synth::ui::Node top;
+        top.id = "selfsized.app.top";
+        top.kind = synth::ui::NodeKind::Section;
+        top.bounds = {0.0f, 0.0f, rootBounds.width, 500.0f};
+
+        synth::ui::Node bottom;
+        bottom.id = "selfsized.app.bottom";
+        bottom.kind = synth::ui::NodeKind::Section;
+        bottom.bounds = {0.0f, 500.0f, rootBounds.width, rootBounds.height - 500.0f};
+        bottom.children = {synth::ui::NodeId("selfsized.app.slot")};
+
+        synth::ui::Node slot;
+        slot.id = "selfsized.app.slot";
+        slot.kind = synth::ui::NodeKind::Section;
+        slot.bounds = {rootBounds.width - slotWidth, 0.0f, slotWidth, slotHeight};
+
+        synth::ui::NodeTree tree;
+        tree.nodes = {std::move(root), std::move(top), std::move(bottom), std::move(slot)};
+        return tree;
+    }
+
+    void SetActionHandler(ActionHandler handler) override
+    {
+        observer_ = std::move(handler);
+    }
+
+    void DispatchAction(const synth::ui::Action& action) override
+    {
+        if (observer_)
+        {
+            observer_(action);
+        }
+    }
+
+    synth::ui::Bounds RootBounds() const override
+    {
+        return declaredRootBounds;
+    }
+
+    std::optional<synth::ui::NodeId> SidebarSlot() const override
+    {
+        if (!includeSlot)
+        {
+            return std::nullopt;
+        }
+        return synth::ui::NodeId("selfsized.app.slot");
+    }
+
+private:
+    ActionHandler observer_;
+};
+
+struct SelfSizedApp
+{
+    static synth::RuntimeConfig Config()
+    {
+        return synth::RuntimeConfig{.appName = "SelfSizedAppTest", .uiWidth = 900, .uiHeight = 560};
+    }
+
+    void Init(synth::AppContext*) {}
+    void ProcessBlock(synth::AudioBlock&) {}
+
+    synth::ui::Surface& PortableSurface()
+    {
+        return surface;
+    }
+
+    SelfSizedAppSurface surface;
+};
+
 struct FakeServices
 {
     int audioRefreshCount = 0;
@@ -510,6 +609,126 @@ void TestCompositeBoundsPreserveAppAndAddSidebar()
                   996.0f,
                   560.0f,
                   "intrinsic bounds");
+}
+
+// A self-sized surface's root is validated against RootBounds() instead of
+// App::Config() -- 900x560 for SelfSizedApp -- so a built root that does not
+// match the surface's OWN declared bounds fails composition, the same
+// generic application-root diagnostic TestRejectsRootSizeMismatch checks for
+// a legacy app (ValidateApplicationTree has one definition of that check;
+// only what it compares against differs per sprs-19).
+void TestSelfSizedRootIsValidatedAgainstItsDeclaredBounds()
+{
+    SelfSizedApp app;
+    FakeServices services;
+    synth::runtime_ui::RuntimeMainComponent<SelfSizedApp, FakeServices> component{app, services};
+    app.surface.declaredRootBounds = {0.0f, 0.0f, 500.0f, 700.0f};  // built root stays 459 wide
+
+    bool threw = false;
+    std::string message;
+    try
+    {
+        component.BuildTree();
+    }
+    catch (const std::invalid_argument& error)
+    {
+        threw = true;
+        message = error.what();
+    }
+    Require(threw, "a self-sized root that disagrees with RootBounds() fails composition");
+    Require(message.find("configured bounds") != std::string::npos,
+            "the diagnostic names the application-root contract");
+}
+
+// A self-sized surface's declared slot receives the sidebar, at the slot's
+// composite position (summed across the two nesting levels
+// SelfSizedAppSurface builds), and the composite is exactly the declared app
+// root rather than the app root plus an additive sidebar column.
+void TestSidebarIsPlacedAtTheDeclaredSlot()
+{
+    SelfSizedApp app;
+    FakeServices services;
+    synth::runtime_ui::RuntimeMainComponent<SelfSizedApp, FakeServices> component{app, services};
+
+    const synth::ui::NodeTree tree = component.BuildTree();
+    RequireBounds(FindNode(tree, "runtime.main.root").bounds,
+                  0.0f, 0.0f, 459.0f, 700.0f, "composite equals the declared app root exactly");
+    RequireBounds(FindNode(tree, synth::runtime_ui::NodeIds::kSidebarRoot).bounds,
+                  363.0f, 500.0f, 96.0f, 200.0f,
+                  "sidebar sits at the slot's composite position: bottom's own (0, 500) plus "
+                  "the slot's (363, 0) relative to bottom");
+}
+
+// A slot smaller than the sidebar root fails composition naming the slot,
+// rather than silently overlapping or clipping it.
+void TestSidebarLargerThanItsSlotFailsComposition()
+{
+    SelfSizedApp app;
+    app.surface.slotHeight = 150.0f;  // sidebar needs 200 for its five default rows
+    FakeServices services;
+    synth::runtime_ui::RuntimeMainComponent<SelfSizedApp, FakeServices> component{app, services};
+
+    bool threw = false;
+    std::string message;
+    try
+    {
+        component.BuildTree();
+    }
+    catch (const std::invalid_argument& error)
+    {
+        threw = true;
+        message = error.what();
+    }
+    Require(threw, "a slot smaller than the sidebar fails composition");
+    Require(message.find("selfsized.app.slot") != std::string::npos,
+            "the diagnostic names the slot node");
+}
+
+// While Audio, Controllers, Sync and File are open in turn, each composes
+// without throwing even though the app root beneath them is narrower than
+// their own configured size: the page keeps the content bounds it was
+// constructed with, and the sidebar sits at the page root's own right edge,
+// not at the narrow app root's. Returning to the application recomposes the
+// slotted tree.
+void TestEveryRuntimePageOpensBesideASlottedApp()
+{
+    SelfSizedApp app;
+    FakeServices services;
+    synth::runtime_ui::RuntimeMainComponent<SelfSizedApp, FakeServices> component{app, services};
+
+    const char* sidebarActions[] = {
+        "runtime.sidebar.audio",
+        "runtime.sidebar.controllers",
+        "runtime.sidebar.sync",
+        "runtime.sidebar.file",
+    };
+    const char* backActions[] = {
+        "runtime.audio.back",
+        "runtime.controllers.back",
+        "runtime.sync.back",
+        "runtime.file.back",
+    };
+    for (std::size_t index = 0; index < 4; ++index)
+    {
+        component.DispatchAction(synth::ui::Action::Named(sidebarActions[index]));
+        Require(component.CurrentPage() != synth::runtime_ui::RuntimeMainPage::Application,
+                "the sidebar action opens a runtime page");
+        const synth::ui::NodeTree tree = component.BuildTree();
+        RequireBounds(tree.nodes[1].bounds, 0.0f, 0.0f, 900.0f, 560.0f,
+                      "the page root keeps the configured content bounds, not the 459-wide app root");
+        RequireBounds(FindNode(tree, synth::runtime_ui::NodeIds::kSidebarRoot).bounds,
+                      900.0f, 0.0f, 96.0f, 200.0f,
+                      "the sidebar sits at the page root's own right edge");
+        component.DispatchAction(synth::ui::Action::Named(backActions[index]));
+        Require(component.CurrentPage() == synth::runtime_ui::RuntimeMainPage::Application,
+                "Back restores the application page");
+    }
+
+    const synth::ui::NodeTree backToApp = component.BuildTree();
+    RequireBounds(FindNode(backToApp, "runtime.main.root").bounds,
+                  0.0f, 0.0f, 459.0f, 700.0f, "the slotted composite returns");
+    RequireBounds(FindNode(backToApp, synth::runtime_ui::NodeIds::kSidebarRoot).bounds,
+                  363.0f, 500.0f, 96.0f, 200.0f, "the sidebar is back in its slot");
 }
 
 // An extent-aware app surface resolves against whatever
@@ -1147,6 +1366,7 @@ int main()
 {
     static_assert(synth::SynthApplication<FakeApp>);
     static_assert(synth::SynthApplication<ExtentAwareApp>);
+    static_assert(synth::SynthApplication<SelfSizedApp>);
     static_assert(synth::SynthApplication<RegisteredPageApp>);
     static_assert(!synth::HasRegisteredPage<FakeApp>, "FakeApp opts out by never defining RegisteredPage()");
     static_assert(synth::HasRegisteredPage<RegisteredPageApp>);
@@ -1156,6 +1376,12 @@ int main()
         TestPlacingASubtreeRootPlacesEveryDescendant);
     Run("TestSubtreesArriveFullyResolved", TestSubtreesArriveFullyResolved);
     Run("TestCompositeBoundsPreserveAppAndAddSidebar", TestCompositeBoundsPreserveAppAndAddSidebar);
+    Run("TestSelfSizedRootIsValidatedAgainstItsDeclaredBounds",
+        TestSelfSizedRootIsValidatedAgainstItsDeclaredBounds);
+    Run("TestSidebarIsPlacedAtTheDeclaredSlot", TestSidebarIsPlacedAtTheDeclaredSlot);
+    Run("TestSidebarLargerThanItsSlotFailsComposition",
+        TestSidebarLargerThanItsSlotFailsComposition);
+    Run("TestEveryRuntimePageOpensBesideASlottedApp", TestEveryRuntimePageOpensBesideASlottedApp);
     Run("TestExtentAwareAppTracksResizedContentExtent", TestExtentAwareAppTracksResizedContentExtent);
     Run("TestSidebarOpensEachPageAndBackRestoresApp", TestSidebarOpensEachPageAndBackRestoresApp);
     Run("TestSidebarShowsOnlyTheDeclaredPages", TestSidebarShowsOnlyTheDeclaredPages);

@@ -8,6 +8,7 @@
 
 #include <concepts>
 #include <functional>
+#include <optional>
 #include <stdexcept>
 #include <string>
 #include <string_view>
@@ -78,6 +79,7 @@ public:
         // app would resolve to if it were never offered anything else:
         // identical to the legacy, hook-free value.
         liveContentExtent_ = contentBounds;
+        lastComposedBounds_ = IntrinsicBounds();
         syncSurface_.SetContentBounds(contentBounds);
         // An application whose own vocabulary already uses "Audio" renames the
         // runtime's Audio page here (RuntimeConfig::audioPageTitle). Unset for
@@ -153,20 +155,29 @@ public:
         // immediately before BuildTree(), generalizing the SetContentBounds
         // convention. app_.PortableSurface() is constrained by
         // SynthApplication to return exactly `ui::Surface&`
-        // (AppConcepts.hpp), erasing the concrete surface type, so the hook
-        // is detected with a dynamic_cast against the separate
-        // ui::ExtentAwareSurface interface rather than a compile-time trait.
-        // A surface that doesn't implement it is left alone and resolves at
-        // its own compiled-in size.
+        // (AppConcepts.hpp), erasing the concrete surface type, so each hook
+        // is detected with a dynamic_cast against its own separate
+        // interface rather than a compile-time trait. A surface that
+        // doesn't implement either is left alone and resolves at its own
+        // compiled-in size.
         ui::Surface& appSurface = app_.PortableSurface();
         auto* extentAwareApp = dynamic_cast<ui::ExtentAwareSurface*>(&appSurface);
+        auto* selfSizedApp = dynamic_cast<ui::SelfSizedSurface*>(&appSurface);
+        const bool applicationShown = currentPage_ == RuntimeMainPage::Application;
+
+        // A self-sized surface (sprs-19) controls its own root outright: its
+        // RootBounds() is authoritative over both the configured size and
+        // whatever an ExtentAwareSurface would also resolve to if it
+        // additionally implemented that interface.
         const ui::Bounds expectedAppBounds =
-            extentAwareApp != nullptr
-                ? liveContentExtent_
-                : ui::Bounds{0.0f,
-                            0.0f,
-                            static_cast<float>(App::Config().uiWidth),
-                            static_cast<float>(App::Config().uiHeight)};
+            selfSizedApp != nullptr
+                ? selfSizedApp->RootBounds()
+                : extentAwareApp != nullptr
+                      ? liveContentExtent_
+                      : ui::Bounds{0.0f,
+                                  0.0f,
+                                  static_cast<float>(App::Config().uiWidth),
+                                  static_cast<float>(App::Config().uiHeight)};
         if (extentAwareApp != nullptr)
         {
             extentAwareApp->SetContentExtent(liveContentExtent_);
@@ -174,24 +185,9 @@ public:
 
         ui::NodeTree appTree = appSurface.BuildTree();
         const std::size_t appRootIndex = ValidateApplicationTree(appTree, expectedAppBounds);
-        // The sidebar is placed at the resolved app tree's root
-        // width rather than a compiled-in one (this used to read
-        // `static_cast<float>(App::Config().uiWidth)` unconditionally). For
-        // a legacy app the hook is never accepted, so expectedAppBounds --
-        // and therefore this resolved width -- is exactly config.uiWidth,
-        // making this bit-identical to the prior expression.
-        const float appRootWidth = appTree.nodes[appRootIndex].bounds.width;
-        // Mirrors appRootWidth above: the composite root's height follows
-        // the resolved app root's height rather than a compiled-in one. The
-        // validator (ValidateApplicationTree) already forced
-        // appTree.nodes[appRootIndex].bounds.height == expectedAppBounds.height,
-        // and expectedAppBounds.height is config.uiHeight for a legacy
-        // (non-adopting) app, so this is bit-identical to the prior
-        // `static_cast<float>(App::Config().uiHeight)` expression for every
-        // existing app; only an extent-aware app resolving at a live-resized
-        // height changes this value.
-        const float appRootHeight = appTree.nodes[appRootIndex].bounds.height;
-        ui::NodeTree contentTree = currentPage_ == RuntimeMainPage::Application
+        const ui::Bounds appRootBounds = appTree.nodes[appRootIndex].bounds;
+
+        ui::NodeTree contentTree = applicationShown
                                        ? MoveRootFirst(std::move(appTree), appRootIndex)
                                        : BuildRuntimePageTree();
         ui::NodeTree sidebarTree = sidebarSurface_.BuildTree();
@@ -199,29 +195,70 @@ public:
         {
             throw std::invalid_argument("sidebar tree must have a root");
         }
-        sidebarTree.nodes.front().bounds.x = appRootWidth;
+
+        // A self-sized surface's declared slot governs sidebar placement
+        // only while it is itself on screen (sprs-19): while any runtime
+        // page is shown instead, the page keeps the content bounds it was
+        // constructed with and the sidebar sits at ITS root's right edge,
+        // "whatever the application surface declares" (sprs-19), which is
+        // also the fix for a surface that never declares a slot at all --
+        // both read the sidebar's x from contentTree's own resolved root
+        // rather than from the app tree's, so an open page is never sized
+        // against an app root it does not contain.
+        const std::optional<ui::NodeId> slot =
+            applicationShown && selfSizedApp != nullptr ? selfSizedApp->SidebarSlot()
+                                                         : std::optional<ui::NodeId>{};
 
         ui::Node root;
         root.id = "runtime.main.root";
         root.kind = ui::NodeKind::Root;
-        // Composite root width and height follow the resolved app root's
-        // width and height plus the sidebar, rather than
-        // IntrinsicBounds()'s compiled-in size, so a resolved app root
-        // larger than config still fits the composition-holds check below
-        // (height previously stayed pinned to
-        // `config.uiHeight` even on the extent-aware branch, so a live
-        // vertical resize would validate against liveContentExtent_.height
-        // but then throw here). IntrinsicBounds() itself is unchanged (it
-        // remains the compiled-in preferred/startup size other callers rely
-        // on); for a legacy app appRootWidth == config.uiWidth and
-        // appRootHeight == config.uiHeight, so this is numerically
-        // identical to `IntrinsicBounds()` as before.
-        root.bounds = {0.0f, 0.0f, appRootWidth + Layout::kSidebarWidth, appRootHeight};
+
+        if (slot.has_value())
+        {
+            ui::Bounds slotBounds{};
+            if (!ComputeCompositePosition(contentTree, *slot, slotBounds))
+            {
+                throw std::invalid_argument(
+                    "self-sized surface names an absent sidebar slot: " + slot->value);
+            }
+            const ui::Bounds& sidebarBounds = sidebarTree.nodes.front().bounds;
+            if (sidebarBounds.width > slotBounds.width + 0.01f ||
+                sidebarBounds.height > slotBounds.height + 0.01f)
+            {
+                throw std::invalid_argument(
+                    "runtime sidebar does not fit its declared slot: " + slot->value);
+            }
+            sidebarTree.nodes.front().bounds.x = slotBounds.x;
+            sidebarTree.nodes.front().bounds.y = slotBounds.y;
+            // The composite is exactly the declared app root (sprs-19): the
+            // sidebar lives inside it rather than beside it.
+            root.bounds = appRootBounds;
+        }
+        else
+        {
+            // The legacy, additive composition: the sidebar sits immediately
+            // to the right of contentTree's own resolved root -- the app
+            // root while the application page is shown, or the page's own
+            // constructed root while a runtime page is shown -- rather than
+            // always reading the app tree's width (which used to put the
+            // sidebar at a resized or narrow app's width even while a
+            // differently-sized page was on screen).
+            const float contentWidth = contentTree.nodes.front().bounds.width;
+            const float contentHeight = contentTree.nodes.front().bounds.height;
+            sidebarTree.nodes.front().bounds.x = contentWidth;
+            root.bounds = {0.0f, 0.0f, contentWidth + Layout::kSidebarWidth, contentHeight};
+        }
         RequireCompositionHolds(root.bounds, contentTree.nodes.front(), sidebarTree.nodes.front());
         root.children = {contentTree.nodes.front().id, sidebarTree.nodes.front().id};
 
         ui::NodeTree result;
         result.nodes.reserve(1 + contentTree.nodes.size() + sidebarTree.nodes.size());
+        // Captured before root moves into result: the last composite this
+        // call built, for a caller that lays out around the composite's
+        // actual size rather than IntrinsicBounds()'s compiled-in one
+        // (sprs-20's shell, which sizes and scales its pane to this).
+        lastComposedBounds_ = root.bounds;
+
         result.nodes.push_back(std::move(root));
         for (ui::Node& node : contentTree.nodes)
         {
@@ -232,6 +269,16 @@ public:
             result.nodes.push_back(std::move(node));
         }
         return result;
+    }
+
+    // The bounds of the composite root the last BuildTree() call produced.
+    // Defaults to the compiled-in IntrinsicBounds() before BuildTree() is
+    // ever called, matching what the first call will in fact produce for a
+    // surface that doesn't resolve against a live-offered or self-declared
+    // size.
+    ui::Bounds ComposedBounds() const
+    {
+        return lastComposedBounds_;
     }
 
     void SetActionHandler(ActionHandler handler) override
@@ -362,6 +409,71 @@ private:
                 " surface. The application's declared uiWidth/uiHeight is the surface, and it must "
                 "be at least as tall as the runtime sidebar.");
         }
+    }
+
+    // Finds `targetId` inside `tree` and sums its own bounds.{x,y} with
+    // every ancestor's, up to and including the tree's own root (always
+    // `tree.nodes.front()`, since every caller here passes a tree already
+    // reordered by MoveRootFirst) -- the composite position the parent-
+    // relative coordinate contract (PortableUI.hpp) assigns it. Returns
+    // false when no node in the tree carries `targetId`, or when it is not
+    // reachable from the root by following parent links (cannot happen for
+    // a tree ValidateApplicationTree already accepted, but this is the sole
+    // caller-facing contract, not that validator's absence).
+    static bool ComputeCompositePosition(const ui::NodeTree& tree,
+                                         const ui::NodeId& targetId,
+                                         ui::Bounds& outBounds)
+    {
+        if (tree.nodes.empty())
+        {
+            return false;
+        }
+
+        std::unordered_map<std::string, std::size_t> nodeIndex;
+        nodeIndex.reserve(tree.nodes.size());
+        for (std::size_t index = 0; index < tree.nodes.size(); ++index)
+        {
+            nodeIndex.emplace(tree.nodes[index].id.value, index);
+        }
+        const auto targetIt = nodeIndex.find(targetId.value);
+        if (targetIt == nodeIndex.end())
+        {
+            return false;
+        }
+
+        std::unordered_map<std::string, std::string> parentByChild;
+        for (const ui::Node& node : tree.nodes)
+        {
+            for (const ui::NodeId& child : node.children)
+            {
+                parentByChild.emplace(child.value, node.id.value);
+            }
+        }
+
+        const std::string rootId = tree.nodes.front().id.value;
+        float x = 0.0f;
+        float y = 0.0f;
+        std::string current = targetId.value;
+        while (true)
+        {
+            const ui::Node& node = tree.nodes[nodeIndex.at(current)];
+            x += node.bounds.x;
+            y += node.bounds.y;
+            if (current == rootId)
+            {
+                break;
+            }
+            const auto parentIt = parentByChild.find(current);
+            if (parentIt == parentByChild.end())
+            {
+                return false;
+            }
+            current = parentIt->second;
+        }
+
+        const ui::Node& target = tree.nodes[targetIt->second];
+        outBounds = {x, y, target.bounds.width, target.bounds.height};
+        return true;
     }
 
     // Each router below reads the surface's own action array rather than
@@ -656,6 +768,7 @@ private:
     bool hasRegisteredPage_ = false;
     ActionHandler actionHandler_;
     ui::Bounds liveContentExtent_;
+    ui::Bounds lastComposedBounds_;
 };
 
 }  // namespace synth::runtime_ui
