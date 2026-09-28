@@ -2864,6 +2864,21 @@ TEST_CASE(nested_depth_inherits_its_parents_attenuverter_mode) {
     REQUIRE_NEAR(nestedDepth->TargetCenterScale(0), 1.0f, 0.0001f);
 }
 
+TEST_CASE(one_way_amount_knob_curve_matches_positive_branch_and_zeroes_the_rest) {
+    REQUIRE_NEAR(synth::OneWayModulationDepthTargetFromKnob(0.75f),
+                 synth::ModulationDepthTargetFromKnob(0.75f), 1e-6f);
+    REQUIRE_NEAR(synth::OneWayModulationDepthTargetFromKnob(0.25f), 0.0f, 1e-6f);
+    REQUIRE_NEAR(synth::OneWayModulationDepthTargetFromKnob(0.5f), 0.0f, 1e-6f);
+
+    // Swept at every hundredth, mirroring
+    // compute_ramp_step_never_progresses_below_the_floor_at_any_curve's own
+    // sweep style: the one-way curve never returns a negative value.
+    for (int hundredth = 0; hundredth <= 100; ++hundredth) {
+        const float knob = static_cast<float>(hundredth) / 100.0f;
+        REQUIRE_TRUE(synth::OneWayModulationDepthTargetFromKnob(knob) >= 0.0f);
+    }
+}
+
 TEST_CASE(nested_depth_route_reads_get_and_bypasses_slew) {
     synth::ParameterManager manager;
     manager.SetGestureCount(2);

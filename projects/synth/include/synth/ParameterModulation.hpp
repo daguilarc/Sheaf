@@ -133,6 +133,16 @@ inline float ModulationDepthTargetFromKnob(float normalizedKnob) {
     return std::copysign(magnitude, bipolar);
 }
 
+// The one-way amount law's own depth curve: the same positive-branch curve
+// shape as ModulationDepthTargetFromKnob, with the negative half floored to
+// zero rather than retained. A raw knob at or left of center (old bipolar
+// depth <= 0) resolves to exactly 0 (off); a raw knob right of center
+// resolves to the SAME positive magnitude ModulationDepthTargetFromKnob
+// already returns for it.
+inline float OneWayModulationDepthTargetFromKnob(float normalizedKnob) {
+    return std::max(0.0f, ModulationDepthTargetFromKnob(normalizedKnob));
+}
+
 enum class Status {
     Ok,
     InvalidConfig,
