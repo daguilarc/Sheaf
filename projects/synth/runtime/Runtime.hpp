@@ -575,7 +575,7 @@ private:
     // Recomputes and publishes the external-input-routed signal from
     // current device state. Routed iff the user-selected input device name
     // -- engine_.AudioDeviceSnapshot().inputDeviceName, the same persisted
-    // selection Start() applies at startup (:287-290) and
+    // selection Start() applies at startup (:248-263) and
     // ApplyAudioDeviceInputSelection/OnEngineAudioDeviceChanged apply live --
     // is non-empty AND matches deviceManager_'s CURRENTLY OPEN input device
     // (getAudioDeviceSetup().inputDeviceName, with a device actually current).
