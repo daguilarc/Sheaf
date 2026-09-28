@@ -80,7 +80,10 @@ plugin needs from Sheaf, each piece usable by any such host.
 
 `include/synth/Engine.hpp`, `include/synth/PatchPersistence.hpp`,
 `src/PatchPersistence.cpp`, `runtime/MidiConnectionManager.hpp`,
-`juce/MidiHandlers.hpp`, `runtime/Runtime.hpp`,
+`juce/MidiHandlers.hpp`, `runtime/Runtime.hpp`, a new
+`runtime/EngineMidiConnections.hpp` (with `runtime/juce_build.mk`'s
+`SYNTH_JUCE_HEADERS` taking `runtime/*.hpp` by wildcard, so editing the new
+header rebuilds every JUCE target),
 `include/synth/RuntimePages.hpp`, `include/synth/RuntimeMainComponent.hpp`,
 `include/synth/RuntimeFileService.hpp`, `runtime/JuceRuntimeMainServices.hpp`,
 `include/synth/browser/BrowserRuntimeMainServices.hpp`, a new
