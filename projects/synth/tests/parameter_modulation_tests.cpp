@@ -3039,6 +3039,124 @@ TEST_CASE(one_way_amount_ignores_restsatzero_and_reads_the_route_directly) {
     REQUIRE_NEAR(carrier.GetRaw(0), 0.3f, 0.0005f);
 }
 
+TEST_CASE(one_way_amount_floor_blocks_encoder_and_absolute_set_below_off) {
+    synth::ParameterManager manager;
+    auto& group = manager.CreateGroup({
+        .numVoices = 1,
+        .numModulators = 1,
+        .numScenes = 1,
+        .maxParameters = 3,
+        .processLiteAlpha = 1.0f,
+        .targetCenterAlpha = 1.0f,
+        .modulationBlendMode = synth::ModulationBlendMode::kAttenuverter,
+    });
+    float source0 = 0.0f;
+    std::array<float*, 1> src0{&source0};
+    group.SetModulationSource(0, src0, {.connected = true});
+
+    auto& carrier = manager.CreateParameter(group, {
+        .name = "Carrier",
+        .defaultValue = 0.5f,
+        .modulationTargetKind = synth::ModulationTargetKind::kOneWayAmount,
+    });
+    synth::Parameter* depth = carrier.EnsureModulationDepth(0);
+    REQUIRE_TRUE(depth != nullptr);
+    REQUIRE_NEAR(depth->SceneCenter(0), 0.5f, 0.0001f);
+
+    const synth::SceneState scene{.leftScene = 0, .rightScene = 0, .blend = 0.0f};
+    // A delta large enough that the unfloored target would be 0.3.
+    depth->HandleIncDec(scene, -0.2f);
+    REQUIRE_NEAR(depth->SceneCenter(0), 0.5f, 0.0001f);
+
+    depth->HandleSetAbsolute(scene, 0.1f);
+    REQUIRE_NEAR(depth->SceneCenter(0), 0.5f, 0.0001f);
+
+    // The SAME two write paths, driven on the TARGET's own top-level value
+    // (a real registered id_, not the depth sentinel): its own "off" is 0.0,
+    // not a depth's 0.5, so the floor must not touch it.
+    carrier.HandleIncDec(scene, -0.4f);
+    REQUIRE_NEAR(carrier.SceneCenter(0), 0.1f, 0.0001f);
+    carrier.HandleSetAbsolute(scene, 0.1f);
+    REQUIRE_NEAR(carrier.SceneCenter(0), 0.1f, 0.0001f);
+}
+
+TEST_CASE(one_way_amount_floor_applies_on_patch_load_with_no_migration) {
+    synth::ParameterManager manager;
+    auto& group = manager.CreateGroup({
+        .numVoices = 1,
+        .numModulators = 1,
+        .numScenes = 1,
+        .maxParameters = 2,
+        .processLiteAlpha = 1.0f,
+        .targetCenterAlpha = 1.0f,
+        .modulationBlendMode = synth::ModulationBlendMode::kAttenuverter,
+    });
+    float source0 = 0.0f;
+    std::array<float*, 1> src0{&source0};
+    group.SetModulationSource(0, src0, {.connected = true});
+
+    auto& carrier = manager.CreateParameter(group, {
+        .name = "Carrier",
+        .defaultValue = 0.5f,
+        .modulationTargetKind = synth::ModulationTargetKind::kOneWayAmount,
+    });
+    synth::Parameter* depth = carrier.EnsureModulationDepth(0);
+    REQUIRE_TRUE(depth != nullptr);
+
+    synth::JsonArena legacyArena(4096);
+    synth::JSON legacyJson = legacyArena.Object();
+    synth::JSON legacySceneCenters = legacyArena.Array();
+    legacySceneCenters.AppendNew(legacyArena.Real(0.25));
+    legacyJson.SetNew("sceneCenters", legacySceneCenters);
+    REQUIRE_TRUE(depth->LoadValuesFromJSON(legacyJson));
+    REQUIRE_NEAR(depth->SceneCenter(0), 0.5f, 0.0001f);
+
+    synth::JsonArena positiveArena(4096);
+    synth::JSON positiveJson = positiveArena.Object();
+    synth::JSON positiveSceneCenters = positiveArena.Array();
+    positiveSceneCenters.AppendNew(positiveArena.Real(0.75));
+    positiveJson.SetNew("sceneCenters", positiveSceneCenters);
+    REQUIRE_TRUE(depth->LoadValuesFromJSON(positiveJson));
+    REQUIRE_NEAR(depth->SceneCenter(0), 0.75f, 0.0001f);
+}
+
+TEST_CASE(one_way_amount_floor_is_a_noop_for_kbipolar_parameters) {
+    synth::ParameterManager manager;
+    auto& group = manager.CreateGroup({
+        .numVoices = 1,
+        .numModulators = 1,
+        .numScenes = 1,
+        .maxParameters = 2,
+        .processLiteAlpha = 1.0f,
+        .targetCenterAlpha = 1.0f,
+        .modulationBlendMode = synth::ModulationBlendMode::kAttenuverter,
+    });
+    float source0 = 0.0f;
+    std::array<float*, 1> src0{&source0};
+    group.SetModulationSource(0, src0, {.connected = true});
+
+    // No modulationTargetKind set -- defaults to kBipolar.
+    auto& carrier = manager.CreateParameter(group, {.name = "Carrier", .defaultValue = 0.5f});
+    synth::Parameter* depth = carrier.EnsureModulationDepth(0);
+    REQUIRE_TRUE(depth != nullptr);
+    REQUIRE_TRUE(depth->TargetKind() == synth::ModulationTargetKind::kBipolar);
+
+    const synth::SceneState scene{.leftScene = 0, .rightScene = 0, .blend = 0.0f};
+    depth->HandleIncDec(scene, -0.3f);
+    REQUIRE_NEAR(depth->SceneCenter(0), 0.2f, 0.0001f);
+
+    depth->HandleSetAbsolute(scene, 0.1f);
+    REQUIRE_NEAR(depth->SceneCenter(0), 0.1f, 0.0001f);
+
+    synth::JsonArena arena(4096);
+    synth::JSON json = arena.Object();
+    synth::JSON sceneCenters = arena.Array();
+    sceneCenters.AppendNew(arena.Real(0.05));
+    json.SetNew("sceneCenters", sceneCenters);
+    REQUIRE_TRUE(depth->LoadValuesFromJSON(json));
+    REQUIRE_NEAR(depth->SceneCenter(0), 0.05f, 0.0001f);
+}
+
 TEST_CASE(nested_depth_route_reads_get_and_bypasses_slew) {
     synth::ParameterManager manager;
     manager.SetGestureCount(2);

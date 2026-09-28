@@ -1427,6 +1427,7 @@ bool Parameter::LoadValuesFromJSON(JSON json) {
     if (!sceneCenters.IsNull() && IsJsonArray(sceneCenters) && sceneCenters.Size() == group_.Config().numScenes) {
         for (std::size_t sceneIx = 0; sceneIx < group_.Config().numScenes; ++sceneIx) {
             SceneCenter(sceneIx) = static_cast<float>(sceneCenters.GetAt(sceneIx).NumberValue());
+            EnforceOneWayAmountFloor(sceneIx);
         }
     }
 
@@ -1608,11 +1609,15 @@ void Parameter::HandleIncDec(const SceneState& scene, float delta) {
 
     if (activeEffectiveWeightSum == 0.0f) {
         ApplySceneDistribution(SceneCenter(scene.leftScene), SceneCenter(scene.rightScene), blend, delta, config_.range);
+        EnforceOneWayAmountFloor(scene.leftScene);
+        EnforceOneWayAmountFloor(scene.rightScene);
         return;
     }
 
     ApplySceneDistribution(SceneCenter(scene.leftScene), SceneCenter(scene.rightScene), blend,
                            delta * (baseShareNumerator / activeEffectiveWeightSum), config_.range);
+    EnforceOneWayAmountFloor(scene.leftScene);
+    EnforceOneWayAmountFloor(scene.rightScene);
 
     ForEachGestureBit(activeGestures, [&](std::size_t gestureIx) {
         const float effectiveWeight = EffectiveGestureWeight(scene, gestureIx, blend);
@@ -1776,6 +1781,8 @@ void Parameter::HandleSetAbsolute(const SceneState& scene, float normalizedTarge
             return;
         }
         committed = true;
+        EnforceOneWayAmountFloor(scene.leftScene);
+        EnforceOneWayAmountFloor(scene.rightScene);
     } catch (...) {
         restoreSnapshot();
     }
@@ -2191,7 +2198,14 @@ float Parameter::EffectiveGestureWeight(const SceneState& scene, std::size_t ges
 
 void Parameter::ResetSceneToDefault(std::size_t sceneIx, float defaultValue) {
     SceneCenter(sceneIx) = defaultValue;
+    EnforceOneWayAmountFloor(sceneIx);
     gestureActiveMasks_[sceneIx] = 0;
+}
+
+void Parameter::EnforceOneWayAmountFloor(std::size_t sceneIx) {
+    if (id_ == kLocalParameterId && config_.modulationTargetKind == ModulationTargetKind::kOneWayAmount) {
+        sceneCenters_[sceneIx] = std::max(sceneCenters_[sceneIx], kNeutralModulationDepthCenter);
+    }
 }
 
 void Parameter::ResetModulationDepthToNeutral(const SceneState& scene) {

@@ -599,6 +599,13 @@ private:
     float EffectiveGestureWeight(const SceneState& scene, std::size_t gestureIx, float blend) const;
     void ResetSceneToDefault(std::size_t sceneIx, float defaultValue);
     void ResetModulationDepthToNeutral(const SceneState& scene);
+    // The hard floor (coordinator ruling, 2026-09-28): for a depth Parameter
+    // (id_ == kLocalParameterId) whose parent target opted into
+    // ModulationTargetKind::kOneWayAmount, raises a scene centre back up to
+    // kNeutralModulationDepthCenter ("off") if a write left it below that --
+    // a no-op for every other parameter. Called once at the end of every
+    // write path that can set sceneCenters_ directly.
+    void EnforceOneWayAmountFloor(std::size_t sceneIx);
     float ComputeRawCenter(const SceneState& scene) const;
     void ComputeAtDepth(const SceneState& scene, std::size_t recursionDepth, bool smoothTargetCenter);
     void SnapCurrentToTarget();
