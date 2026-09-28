@@ -521,6 +521,7 @@ public:
     const std::string& Name() const { return config_.name; }
     const std::string& ShortName() const { return config_.shortName; }
     RangeKind Range() const { return config_.range; }
+    ModulationTargetKind TargetKind() const { return config_.modulationTargetKind; }
     Color BaseColor() const { return config_.baseColor; }
     Color IndicatorColor(std::size_t voiceIx) const;
     std::size_t SwitchValues() const;

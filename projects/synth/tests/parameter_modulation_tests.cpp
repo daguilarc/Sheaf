@@ -2879,6 +2879,35 @@ TEST_CASE(one_way_amount_knob_curve_matches_positive_branch_and_zeroes_the_rest)
     }
 }
 
+TEST_CASE(one_way_amount_nested_depth_of_depth_inherits_the_one_way_law) {
+    synth::ParameterManager manager;
+    auto& group = manager.CreateGroup({
+        .numVoices = 1,
+        .numModulators = 1,
+        .numScenes = 1,
+        .maxParameters = 3,
+        .processLiteAlpha = 1.0f,
+        .targetCenterAlpha = 1.0f,
+        .modulationBlendMode = synth::ModulationBlendMode::kAttenuverter,
+    });
+    float source0 = 0.0f;
+    std::array<float*, 1> src0{&source0};
+    group.SetModulationSource(0, src0, {.connected = true});
+
+    auto& topLevel = manager.CreateParameter(group, {
+        .name = "TopLevel",
+        .defaultValue = 0.5f,
+        .modulationTargetKind = synth::ModulationTargetKind::kOneWayAmount,
+    });
+    synth::Parameter* depth = topLevel.EnsureModulationDepth(0);
+    REQUIRE_TRUE(depth != nullptr);
+    synth::Parameter* nestedDepth = depth->EnsureModulationDepth(0);
+    REQUIRE_TRUE(nestedDepth != nullptr);
+
+    REQUIRE_TRUE(depth->TargetKind() == synth::ModulationTargetKind::kOneWayAmount);
+    REQUIRE_TRUE(nestedDepth->TargetKind() == synth::ModulationTargetKind::kOneWayAmount);
+}
+
 TEST_CASE(nested_depth_route_reads_get_and_bypasses_slew) {
     synth::ParameterManager manager;
     manager.SetGestureCount(2);
