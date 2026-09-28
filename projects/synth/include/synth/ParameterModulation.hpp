@@ -40,6 +40,16 @@ enum class RangeKind {
     Bipolar,
 };
 
+// Selects which law Parameter::ComputeAtDepth applies to a TARGET parameter's
+// own routes under ModulationBlendMode::kAttenuverter: kBipolar is the
+// existing signed attenuverter law (unchanged for every parameter that does
+// not opt in); kOneWayAmount is the one-sided "every route only ever adds"
+// law an app opts a specific parameter into via ParameterConfig.
+enum class ModulationTargetKind {
+    kBipolar,
+    kOneWayAmount,
+};
+
 float ClampToRange(float value, RangeKind range);
 
 namespace detail {
@@ -280,6 +290,7 @@ struct ParameterConfig {
     Color baseColor = Color::Grey;
     synth::ui::Visualizer* visualizer = nullptr;
     std::vector<Color> indicatorColors;
+    ModulationTargetKind modulationTargetKind = ModulationTargetKind::kBipolar;
 };
 
 class Modulators {
