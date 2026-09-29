@@ -66,10 +66,18 @@ class ShellComponent : public juce::Component {
 public:
     explicit ShellComponent(Runtime<App>& runtime) : mainPane_(runtime) {
         viewport_.setViewedComponent(&mainPane_, false);
-        // Vertical scrolling only: the pane is always scaled to fit the
-        // shell's width exactly (scale = min(1, shell width / pane width)),
-        // so horizontal overflow never happens by construction.
+        // Vertical scrolling only: the pane is scaled to fit the shell's
+        // width (scale = min(1, shell width / pane width)). A visible
+        // vertical scrollbar narrows the viewport's content area by its
+        // thickness, leaving the pane that much wider than the area, and
+        // drag-to-scroll then moves it sideways by that much. On touch
+        // platforms no scrollbar is drawn, so the pane fills the width
+        // exactly; dragging and the wheel still scroll vertically.
+#if JUCE_ANDROID || JUCE_IOS
+        viewport_.setScrollBarsShown(false, false, true, false);
+#else
         viewport_.setScrollBarsShown(true, false);
+#endif
         // Every input source scrolls on drag (not just touch, JUCE's
         // "nonHover" default) so a mouse-driven desktop shell scrolls too; a
         // node that takes drags (a knob, an encoder) opts out with
