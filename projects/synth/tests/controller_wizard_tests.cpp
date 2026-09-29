@@ -711,6 +711,47 @@ TEST_CASE(DiscoveryRejectsPrefixSuffixAndImplicitNumberVariants) {
     RequireDeviceIds(discovery.unmatchedOutputs, {"prefix-out", "suffix-out", "number-out"});
 }
 
+// A device with no name of its own reaches JUCE on Android as "<device
+// name> Output Port N" (this application's input) / "<device name> Input
+// Port N" (this application's output) -- see FroggersMidiCatalog.hpp's
+// TwisterDeviceDefault() comment. MatchesAnyAlias must accept that shape
+// too, so a Twister presenting these Android-built names, with no
+// Android-specific alias string of its own, still pairs.
+TEST_CASE(DiscoveryMatchesAndroidUnnamedPortDeviceAfterStrippingItsPortSuffix) {
+    const synth::MidiDeviceList devices =
+        Devices({Device("android-in", "DJ TechTools Midi Fighter Twister Output Port 1")},
+                {Device("android-out", "DJ TechTools Midi Fighter Twister Input Port 1")});
+
+    const synth::WizardDiscovery discovery =
+        synth::DiscoverControllerWizards(devices, synth::MidiInstrumentConfig{},
+                                         TestTwisterRegistry());
+
+    REQUIRE_TRUE(discovery.available.size() == 1);
+    RequireCandidate(discovery.available[0], "com.sheaf.midi-fighter-twister",
+                     "MIDI Fighter Twister", synth::MidiProfileKind::MfTwister, "android-in",
+                     "android-out");
+    REQUIRE_TRUE(discovery.unmatchedInputs.empty());
+    REQUIRE_TRUE(discovery.unmatchedOutputs.empty());
+}
+
+// The other half of that rule: stripping the port suffix must not turn an
+// unrelated device into a false match just because it also has unnamed
+// ports -- only a remainder that ends with " " + one of the preset's own
+// aliases qualifies.
+TEST_CASE(DiscoveryRejectsAndroidUnnamedPortDeviceWithAnUnrelatedName) {
+    const synth::MidiDeviceList devices =
+        Devices({Device("other-in", "Other Maker Other Thing Output Port 1")},
+                {Device("other-out", "Other Maker Other Thing Input Port 1")});
+
+    const synth::WizardDiscovery discovery =
+        synth::DiscoverControllerWizards(devices, synth::MidiInstrumentConfig{},
+                                         TestTwisterRegistry());
+
+    REQUIRE_TRUE(discovery.available.empty());
+    RequireDeviceIds(discovery.unmatchedInputs, {"other-in"});
+    RequireDeviceIds(discovery.unmatchedOutputs, {"other-out"});
+}
+
 TEST_CASE(DiscoveryReportsUnmatchedNamesAndHalfPairs) {
     const synth::MidiDeviceList devices = Devices(
         {Device("twister-in", "Midi Fighter Twister"),

@@ -199,11 +199,68 @@ std::vector<MidiDeviceInfoRef> UnmatchedEndpoints(
     return unmatched;
 }
 
+// On Android, JUCE names an unnamed port "<device name> <direction> Port N"
+// (see the app-side MidiAppDeviceDefault catalog's Twister entry for the
+// full trace of where each part of that name comes from). Strips a trailing
+// " Output Port N" or " Input Port N" (N one or
+// more ASCII digits) so the remainder can still be checked against a
+// preset's existing (desktop-shaped) aliases. Returns name unchanged (same
+// data(), same size()) when it has no such suffix, which the caller uses to
+// tell "nothing stripped" apart from "stripped to an empty remainder".
+// Case-insensitive, like every other name comparison in this file.
+std::string_view StripTrailingAndroidPortSuffix(std::string_view name) {
+    static constexpr std::string_view kSuffixes[] = {" Output Port ", " Input Port "};
+    for (const std::string_view suffix : kSuffixes) {
+        if (name.size() <= suffix.size()) {
+            continue;
+        }
+        // The digits (port index) occupy the tail of name; suffix must
+        // immediately precede them, ending exactly at name's own end.
+        std::size_t digitsBegin = name.size();
+        while (digitsBegin > 0 && std::isdigit(static_cast<unsigned char>(name[digitsBegin - 1]))) {
+            --digitsBegin;
+        }
+        const bool hasDigits = digitsBegin < name.size();
+        if (!hasDigits || digitsBegin < suffix.size()) {
+            continue;
+        }
+        const std::string_view candidateSuffix = name.substr(digitsBegin - suffix.size(), suffix.size());
+        if (CaseInsensitiveEquals(candidateSuffix, suffix)) {
+            return name.substr(0, digitsBegin - suffix.size());
+        }
+    }
+    return name;
+}
+
 }  // namespace
 
 bool MatchesAnyAlias(std::string_view name, const std::vector<std::string>& aliases) {
-    return std::any_of(aliases.begin(), aliases.end(), [name](const std::string& alias) {
-        return CaseInsensitiveEquals(name, alias);
+    if (std::any_of(aliases.begin(), aliases.end(), [name](const std::string& alias) {
+            return CaseInsensitiveEquals(name, alias);
+        })) {
+        return true;
+    }
+
+    // A name Android/JUCE built by appending " Output Port N" or
+    // " Input Port N" to a device with no name of its own also matches when
+    // what is left after removing that suffix ends with a space followed by
+    // one of the preset's aliases -- e.g. "DJ TechTools Midi Fighter
+    // Twister Output Port 1" ends with " Midi Fighter Twister" once its port
+    // suffix is removed. This never widens a match for a name that already
+    // carries no such suffix (StripTrailingAndroidPortSuffix returns it
+    // unchanged, same size, so the loop below is skipped entirely), so a
+    // prefix/suffix/implicit-number variant with no port suffix is rejected
+    // exactly as before.
+    const std::string_view stripped = StripTrailingAndroidPortSuffix(name);
+    if (stripped.size() == name.size()) {
+        return false;
+    }
+    return std::any_of(aliases.begin(), aliases.end(), [stripped](const std::string& alias) {
+        if (stripped.size() <= alias.size()) {
+            return false;
+        }
+        const std::string_view tail = stripped.substr(stripped.size() - alias.size());
+        return stripped[stripped.size() - alias.size() - 1] == ' ' && CaseInsensitiveEquals(tail, alias);
     });
 }
 
