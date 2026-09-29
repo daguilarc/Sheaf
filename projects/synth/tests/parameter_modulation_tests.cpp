@@ -2935,7 +2935,8 @@ TEST_CASE(one_way_amount_target_adds_reach_and_ignores_disconnected_sources) {
     carrier.Compute({.leftScene = 0, .rightScene = 0, .blend = 0.0f});
     carrier.ProcessLite();
     group.GetModulators().Value(0, 0) = 0.8f;
-    REQUIRE_NEAR(carrier.GetRaw(0), 0.78f, 0.0005f);
+    // Crossfade, not add-only: (1 - 0.6)*0.3 + 0.6*0.8 = 0.12 + 0.48 = 0.60.
+    REQUIRE_NEAR(carrier.GetRaw(0), 0.60f, 0.0005f);
 
     // Disconnect the source: the route reads 0 regardless of its own stored
     // value (still 0.8) or the depth that was set -- the knob alone comes
@@ -2946,13 +2947,13 @@ TEST_CASE(one_way_amount_target_adds_reach_and_ignores_disconnected_sources) {
     REQUIRE_NEAR(carrier.GetRaw(0), 0.3f, 0.0005f);
 }
 
-TEST_CASE(one_way_amount_two_routes_add_independently_and_clamp_to_the_top) {
+TEST_CASE(one_way_amount_two_routes_crossfade_and_renormalize_past_the_top) {
     synth::ParameterManager manager;
     auto& group = manager.CreateGroup({
         .numVoices = 1,
         .numModulators = 2,
         .numScenes = 1,
-        .maxParameters = 6,
+        .maxParameters = 9,
         .processLiteAlpha = 1.0f,
         .targetCenterAlpha = 1.0f,
         .modulationBlendMode = synth::ModulationBlendMode::kAttenuverter,
@@ -2964,8 +2965,9 @@ TEST_CASE(one_way_amount_two_routes_add_independently_and_clamp_to_the_top) {
     group.SetModulationSource(0, src0, {.connected = true});
     group.SetModulationSource(1, src1, {.connected = true, .restsAtZero = true});
 
-    // Two routes add independently: knob 0.3, depth 0.5 at source 1.0, depth
-    // 0.3 at a resting envelope follower reading source 0.0.
+    // Two routes crossfade against the knob: knob 0.3, depth 0.5 at source
+    // 1.0, depth 0.3 at a resting envelope follower reading source 0.0.
+    // W = 0.8, (1 - 0.8)*0.3 + (0.5*1.0 + 0.3*0.0) = 0.06 + 0.5 = 0.56.
     auto& sumCarrier = manager.CreateParameter(group, {
         .name = "SumCarrier",
         .defaultValue = 0.3f,
@@ -2981,29 +2983,53 @@ TEST_CASE(one_way_amount_two_routes_add_independently_and_clamp_to_the_top) {
     sumCarrier.ProcessLite();
     group.GetModulators().Value(0, 0) = 1.0f;
     group.GetModulators().Value(0, 1) = 0.0f;
-    REQUIRE_NEAR(sumCarrier.GetRaw(0), 0.8f, 0.0005f);
+    REQUIRE_NEAR(sumCarrier.GetRaw(0), 0.56f, 0.0005f);
 
-    // Two full-depth routes summing past the range's top: knob 0.2, depth
-    // 0.5 at source 1.0 and depth 0.4 at source 1.0 -- clamped to 1.0, with
-    // neither route's own stored depth renormalized by the other's presence.
-    auto& clampCarrier = manager.CreateParameter(group, {
-        .name = "ClampCarrier",
+    // Two routes with W <= 1: knob 0.2, depth 0.5 at source 1.0 and depth 0.4
+    // at source 1.0 -- W = 0.9, (1 - 0.9)*0.2 + 0.9 = 0.92, with neither
+    // route's own stored depth renormalized (W has not crossed 1).
+    auto& subCeilingCarrier = manager.CreateParameter(group, {
+        .name = "SubCeilingCarrier",
         .defaultValue = 0.2f,
         .modulationTargetKind = synth::ModulationTargetKind::kOneWayAmount,
     });
-    synth::Parameter* clampDepth0 = clampCarrier.EnsureModulationDepth(0);
-    synth::Parameter* clampDepth1 = clampCarrier.EnsureModulationDepth(1);
-    REQUIRE_TRUE(clampDepth0 != nullptr);
-    REQUIRE_TRUE(clampDepth1 != nullptr);
-    clampDepth0->SceneCenter(0) = KnobForRawModulationDepth(0.5f);
-    clampDepth1->SceneCenter(0) = KnobForRawModulationDepth(0.4f);
-    clampCarrier.Compute({.leftScene = 0, .rightScene = 0, .blend = 0.0f});
-    clampCarrier.ProcessLite();
+    synth::Parameter* subCeilingDepth0 = subCeilingCarrier.EnsureModulationDepth(0);
+    synth::Parameter* subCeilingDepth1 = subCeilingCarrier.EnsureModulationDepth(1);
+    REQUIRE_TRUE(subCeilingDepth0 != nullptr);
+    REQUIRE_TRUE(subCeilingDepth1 != nullptr);
+    subCeilingDepth0->SceneCenter(0) = KnobForRawModulationDepth(0.5f);
+    subCeilingDepth1->SceneCenter(0) = KnobForRawModulationDepth(0.4f);
+    subCeilingCarrier.Compute({.leftScene = 0, .rightScene = 0, .blend = 0.0f});
+    subCeilingCarrier.ProcessLite();
     group.GetModulators().Value(0, 0) = 1.0f;
     group.GetModulators().Value(0, 1) = 1.0f;
-    REQUIRE_NEAR(clampCarrier.GetRaw(0), 1.0f, 0.0005f);
-    REQUIRE_NEAR(clampCarrier.TargetDepthForSource(0, 0), 0.5f, 0.0005f);
-    REQUIRE_NEAR(clampCarrier.TargetDepthForSource(0, 1), 0.4f, 0.0005f);
+    REQUIRE_NEAR(subCeilingCarrier.GetRaw(0), 0.92f, 0.0005f);
+    REQUIRE_NEAR(subCeilingCarrier.TargetDepthForSource(0, 0), 0.5f, 0.0005f);
+    REQUIRE_NEAR(subCeilingCarrier.TargetDepthForSource(0, 1), 0.4f, 0.0005f);
+
+    // Two routes with W > 1: knob 0.2, depth 0.8 at source 1.0 and depth 0.6
+    // at source 0.0 -- W = 1.4 > 1, so the knob drops out entirely and both
+    // depths renormalize by W: 0.8/1.4 = 0.5714286, 0.6/1.4 = 0.4285714, and
+    // the result is Sigma (d/W)*u = 0.5714286*1.0 + 0.4285714*0.0 =
+    // 0.5714286.
+    auto& renormalizeCarrier = manager.CreateParameter(group, {
+        .name = "RenormalizeCarrier",
+        .defaultValue = 0.2f,
+        .modulationTargetKind = synth::ModulationTargetKind::kOneWayAmount,
+    });
+    synth::Parameter* renormalizeDepth0 = renormalizeCarrier.EnsureModulationDepth(0);
+    synth::Parameter* renormalizeDepth1 = renormalizeCarrier.EnsureModulationDepth(1);
+    REQUIRE_TRUE(renormalizeDepth0 != nullptr);
+    REQUIRE_TRUE(renormalizeDepth1 != nullptr);
+    renormalizeDepth0->SceneCenter(0) = KnobForRawModulationDepth(0.8f);
+    renormalizeDepth1->SceneCenter(0) = KnobForRawModulationDepth(0.6f);
+    renormalizeCarrier.Compute({.leftScene = 0, .rightScene = 0, .blend = 0.0f});
+    renormalizeCarrier.ProcessLite();
+    group.GetModulators().Value(0, 0) = 1.0f;
+    group.GetModulators().Value(0, 1) = 0.0f;
+    REQUIRE_NEAR(renormalizeCarrier.GetRaw(0), 0.5714286f, 0.0005f);
+    REQUIRE_NEAR(renormalizeCarrier.TargetDepthForSource(0, 0), 0.5714286f, 0.0005f);
+    REQUIRE_NEAR(renormalizeCarrier.TargetDepthForSource(0, 1), 0.4285714f, 0.0005f);
 }
 
 TEST_CASE(one_way_amount_ignores_restsatzero_and_reads_the_route_directly) {
@@ -3037,6 +3063,52 @@ TEST_CASE(one_way_amount_ignores_restsatzero_and_reads_the_route_directly) {
     // would read 0.15 at this same depth and source): the one-way law
     // ignores restsAtZero and reads the route directly.
     REQUIRE_NEAR(carrier.GetRaw(0), 0.3f, 0.0005f);
+}
+
+TEST_CASE(one_way_amount_band_is_visible_at_full_knob) {
+    synth::ParameterManager manager;
+    auto& group = manager.CreateGroup({
+        .numVoices = 1,
+        .numModulators = 1,
+        .numScenes = 1,
+        .maxParameters = 2,
+        .processLiteAlpha = 1.0f,
+        .targetCenterAlpha = 1.0f,
+        .modulationBlendMode = synth::ModulationBlendMode::kAttenuverter,
+    });
+    float source0 = 0.0f;
+    std::array<float*, 1> src0{&source0};
+    group.SetModulationSource(0, src0, {.connected = true});
+
+    // Knob at 1.0, full depth 0.25: the crossfade law still leaves room for
+    // modulation, unlike the add-only law (which would clamp both ends to
+    // 1.0 and hide the band entirely).
+    auto& carrier = manager.CreateParameter(group, {
+        .name = "Carrier",
+        .defaultValue = 1.0f,
+        .modulationTargetKind = synth::ModulationTargetKind::kOneWayAmount,
+    });
+    synth::Parameter* depth = carrier.EnsureModulationDepth(0);
+    REQUIRE_TRUE(depth != nullptr);
+    depth->SceneCenter(0) = KnobForRawModulationDepth(0.25f);
+
+    carrier.Compute({.leftScene = 0, .rightScene = 0, .blend = 0.0f});
+    carrier.ProcessLite();
+
+    synth::Parameter::UIState ui(1);
+    carrier.PopulateUIState(ui);
+    REQUIRE_NEAR(ui.minValues[0].load(), 0.75f, 0.0005f);
+    REQUIRE_NEAR(ui.maxValues[0].load(), 1.0f, 0.0005f);
+
+    group.GetModulators().Value(0, 0) = 0.0f;
+    carrier.Compute({.leftScene = 0, .rightScene = 0, .blend = 0.0f});
+    carrier.ProcessLite();
+    REQUIRE_NEAR(carrier.GetRaw(0), 0.75f, 0.0005f);
+
+    group.GetModulators().Value(0, 0) = 1.0f;
+    carrier.Compute({.leftScene = 0, .rightScene = 0, .blend = 0.0f});
+    carrier.ProcessLite();
+    REQUIRE_NEAR(carrier.GetRaw(0), 1.0f, 0.0005f);
 }
 
 TEST_CASE(one_way_amount_floor_blocks_encoder_and_absolute_set_below_off) {

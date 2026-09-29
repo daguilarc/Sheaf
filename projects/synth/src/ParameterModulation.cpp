@@ -2347,9 +2347,25 @@ void Parameter::ComputeAtDepth(const SceneState& scene, std::size_t recursionDep
     }
 
     for (std::size_t voiceIx = 0; voiceIx < group_.Config().numVoices; ++voiceIx) {
-        if (group_.Config().modulationBlendMode == ModulationBlendMode::kAttenuverter) {
+        const bool isOneWayAmount = config_.modulationTargetKind == ModulationTargetKind::kOneWayAmount;
+        if (isOneWayAmount) {
+            // A kOneWayAmount target always crosses over to the crossfade
+            // computation below (proposal.md's "The law"), even when the
+            // group's own blend mode is kAttenuverter: a disconnected
+            // source's route still contributes nothing, regardless of the
+            // depth or the source's own stored value, so it is zeroed here
+            // before the crossfade weighting below ever sees it.
+            for (std::size_t routeSlot = 0; routeSlot < activeRouteCount_; ++routeSlot) {
+                const std::size_t sourceIx = RouteSourceIndex(routeSlot);
+                const ModulatorMetadata& sourceMetadata = group_.GetModulators().Metadata(sourceIx);
+                if (!sourceMetadata.connected) {
+                    targetDepths_[VoiceRouteIndex(voiceIx, routeSlot)] = 0.0f;
+                }
+            }
+        }
+
+        if (group_.Config().modulationBlendMode == ModulationBlendMode::kAttenuverter && !isOneWayAmount) {
             targetCenterScales_[voiceIx] = 1.0f;
-            const bool isOneWayAmount = config_.modulationTargetKind == ModulationTargetKind::kOneWayAmount;
 
             float normalizationOffset = 0.0f;
             float minContribution = 0.0f;
@@ -2358,18 +2374,7 @@ void Parameter::ComputeAtDepth(const SceneState& scene, std::size_t recursionDep
                 const std::size_t sourceIx = RouteSourceIndex(routeSlot);
                 const ModulatorMetadata& sourceMetadata = group_.GetModulators().Metadata(sourceIx);
                 float restPoint = 0.5f;
-                if (isOneWayAmount) {
-                    // The one-way law forces every active route's rest point
-                    // to zero and reads restsAtZero == true or == false
-                    // identically (design.md's "The law": ignores restsAtZero
-                    // altogether), and treats a disconnected source's own
-                    // route as contributing nothing, regardless of the depth
-                    // or the source's own stored value.
-                    restPoint = 0.0f;
-                    if (!sourceMetadata.connected) {
-                        targetDepths_[VoiceRouteIndex(voiceIx, routeSlot)] = 0.0f;
-                    }
-                } else if (sourceMetadata.restsAtZero) {
+                if (sourceMetadata.restsAtZero) {
                     restPoint = 0.0f;
                     targetDepths_[VoiceRouteIndex(voiceIx, routeSlot)] *= 0.5f;
                 }
