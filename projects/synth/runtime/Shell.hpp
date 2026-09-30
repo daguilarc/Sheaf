@@ -93,16 +93,16 @@ public:
     // The composite can change between ticks with no shell resize at all --
     // a self-sized app surface (sprs-19) dispatching a new declared width is
     // the case that matters here -- so the pane is re-laid-out on every
-    // refresh, not only on resized().
+    // refresh, not only on resized(). The pane is not repainted wholesale
+    // here: every node repaints itself when what it draws changed.
     void RepaintAll() {
         mainPane_.RefreshOnTick();
-        LayoutMainPane();
-        mainPane_.repaint();
+        LayoutMainPane(false);
     }
 
     void resized() override {
         viewport_.setBounds(getLocalBounds());
-        LayoutMainPane();
+        LayoutMainPane(true);
     }
 
     MainPane<App>& GetMainPane() { return mainPane_; }
@@ -115,8 +115,22 @@ private:
     // resized() first (via setSize, offering the PANE's own bounds, wrong
     // whenever pane != shell) and then corrects it: the last extent offered
     // is always the shell's, per sprs-20.
-    void LayoutMainPane() {
+    //
+    // Laying out ends in OfferContentExtent(), which rebuilds the renderer's
+    // whole tree, so a tick in which neither the shell's size nor the
+    // composite's bounds changed skips it: RefreshOnTick() has already
+    // rebuilt the tree once this tick, and with nothing changed the pane's
+    // setSize() would not have re-offered its own bounds, so the last extent
+    // offered is still the shell's.
+    void LayoutMainPane(bool force) {
         const synth::ui::Bounds composite = mainPane_.ComposedBounds();
+        const juce::Rectangle<int> shellBounds = getLocalBounds();
+        if (!force && shellBounds == lastShellBounds_ && composite.width == lastComposite_.width
+            && composite.height == lastComposite_.height) {
+            return;
+        }
+        lastShellBounds_ = shellBounds;
+        lastComposite_ = composite;
         const float shellWidth = static_cast<float>(getWidth());
         const float shellHeight = static_cast<float>(getHeight());
         const float paneWidth = std::max(shellWidth, composite.width);
@@ -132,6 +146,8 @@ private:
     // to it) is destroyed first, in reverse declaration order.
     MainPane<App> mainPane_;
     juce::Viewport viewport_;
+    juce::Rectangle<int> lastShellBounds_;
+    synth::ui::Bounds lastComposite_;
 };
 
 template <synth::SynthApplication App>

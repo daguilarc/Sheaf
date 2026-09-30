@@ -1628,6 +1628,65 @@ void TestDeclaredColumnBoundsResolveWithoutReflow()
 
 int failureCount = 0;
 
+// Counts every invalidation that reaches the component it is installed on,
+// including repaints its children forward to it.
+struct InvalidationRecorder final : juce::CachedComponentImage
+{
+    int invalidations = 0;
+    void paint(juce::Graphics&) override {}
+    bool invalidateAll() override
+    {
+        ++invalidations;
+        return false;
+    }
+    bool invalidate(const juce::Rectangle<int>&) override
+    {
+        ++invalidations;
+        return false;
+    }
+    void releaseResources() override {}
+};
+
+// A UI tick rebuilds the tree from the surface; when nothing in it changed,
+// nothing on screen is invalidated (on Android any invalidation redraws the
+// whole window, which starved the audio callback).
+void TestUnchangedRefreshInvalidatesNothing()
+{
+    RecordingSurface surface;
+    const auto drawNode = [](const char* id, float x, synth::Color colour) {
+        return synth::ui::Node{.id = synth::ui::NodeId(id),
+                               .kind = synth::ui::NodeKind::Draw,
+                               .bounds = {x, 10.0f, 40.0f, 30.0f},
+                               .drawCommands = {synth::ui::DrawCommand::Fill(
+                                   {0.0f, 0.0f, 40.0f, 30.0f}, colour)}};
+    };
+    surface.tree.nodes = {
+        {.id = synth::ui::NodeId("root"),
+         .kind = synth::ui::NodeKind::Root,
+         .bounds = {0.0f, 0.0f, 240.0f, 100.0f},
+         .children = {synth::ui::NodeId("a.draw"), synth::ui::NodeId("b.draw")}},
+        drawNode("a.draw", 10.0f, synth::Color::Rgb(220, 40, 30)),
+        drawNode("b.draw", 70.0f, synth::Color::Rgb(30, 180, 70)),
+    };
+
+    synth_juce::PortableComponent component(surface);
+    component.setSize(240, 100);
+    component.setVisible(true);
+    component.RefreshFromSurface();
+    component.RefreshFromSurface();
+
+    auto* recorder = new InvalidationRecorder();
+    component.setCachedComponentImage(recorder);
+    recorder->invalidations = 0; // installing the image repaints once
+
+    component.RefreshFromSurface();
+    Require(recorder->invalidations == 0, "a refresh with an unchanged tree invalidates nothing");
+
+    surface.tree.nodes[2] = drawNode("b.draw", 70.0f, synth::Color::Rgb(40, 100, 230));
+    component.RefreshFromSurface();
+    Require(recorder->invalidations > 0, "a refresh that changes one node's drawing invalidates something");
+}
+
 void Run(const char* name, void (*body)())
 {
     try
@@ -1679,6 +1738,7 @@ int main()
     Run("TestInertDrawInterceptsNothing", TestInertDrawInterceptsNothing);
     Run("TestReleaseOutsideTheNodeIsNoClick", TestReleaseOutsideTheNodeIsNoClick);
     Run("TestDoubleClickSequenceMatchesButtonExactly", TestDoubleClickSequenceMatchesButtonExactly);
+    Run("TestUnchangedRefreshInvalidatesNothing", TestUnchangedRefreshInvalidatesNothing);
 
     if (failureCount != 0)
     {

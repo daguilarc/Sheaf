@@ -24,6 +24,8 @@ struct NodeId {
 struct Point {
     float x = 0.0f;
     float y = 0.0f;
+
+    bool operator==(const Point&) const = default;
 };
 
 // Coordinate contract (sru-46, command buffer version 2).
@@ -49,6 +51,8 @@ struct Bounds {
     float y = 0.0f;
     float width = 0.0f;
     float height = 0.0f;
+
+    bool operator==(const Bounds&) const = default;
 };
 
 enum class TextAlign {
@@ -61,6 +65,8 @@ struct TextStyle {
     float size = 14.0f;
     Color color = Color::Rgb(255, 255, 255);
     TextAlign align = TextAlign::Left;
+
+    bool operator==(const TextStyle&) const = default;
 };
 
 struct Action {
@@ -105,6 +111,8 @@ struct DrawCommand {
     std::string text;
     TextStyle textStyle{};
     std::vector<Point> points{};
+
+    bool operator==(const DrawCommand&) const = default;
 
     static DrawCommand Fill(Color color);
     static DrawCommand Fill(Bounds bounds, Color color);
