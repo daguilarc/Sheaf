@@ -290,7 +290,7 @@ WHEN the browser backend renders a composite frame, THE backend SHALL treat ever
 - **AND** no independent-root gap or overlap appears
 
 ### Requirement: sprs-19 — Composition: a surface may declare its own root bounds and a sidebar slot
-WHEN an application surface also implements `ui::SelfSizedSurface`, THE shared main component SHALL validate the application root against the bounds that surface's `RootBounds()` returns instead of the configured or offered size, SHALL, when its `SidebarSlot()` names a node of the application tree, place the runtime sidebar root at that node's position in composite coordinates and make the composite exactly the application root's size while the application page is shown, and SHALL fail composition with a diagnostic naming the slot when the sidebar root does not fit inside the slot node's bounds or the named node is absent. While a runtime page (Audio, Controllers, Sync, File or a registered app page) is shown, the page SHALL keep the content bounds the component gives it at construction and the sidebar SHALL sit at the page root's right edge, as sprs-2 states, whatever the application surface declares. The component SHALL expose the bounds of the last composite it built. A surface that does not implement the interface SHALL compose as sprs-2 states.
+WHEN an application surface also implements `ui::SelfSizedSurface`, THE shared main component SHALL validate the application root against the bounds that surface's `RootBounds()` returns instead of the configured or offered size, SHALL, when its `SidebarSlot()` names a node of the application tree, place the runtime sidebar root at that node's position in composite coordinates and make the composite exactly the application root's size while the application page is shown, and SHALL fail composition with a diagnostic naming the slot when the sidebar root does not fit inside the slot node's bounds or the named node is absent. While a runtime page (Audio, Controllers, Sync, File or a registered app page) is shown, the sidebar SHALL sit at the page root's right edge, as sprs-2 states; the page SHALL take the application root's width less the sidebar width and the application root's height when the surface declares a slot, so the composite is exactly the application root, and SHALL keep the content bounds the component gives it at construction otherwise. The component SHALL expose the bounds of the last composite it built. A surface that does not implement the interface SHALL compose as sprs-2 states.
 
 #### Scenario: The declared root is validated
 - **WHEN** a self-sized surface's root differs from the bounds it declares
@@ -304,9 +304,14 @@ WHEN an application surface also implements `ui::SelfSizedSurface`, THE shared m
 
 #### Scenario: Every runtime page opens beside a slotted app
 - **WHEN** a self-sized surface narrower than its configured width declares a slot, and Audio, Controllers, Sync and File are opened in turn
-- **THEN** each composes without error, its root at 0,0 with the configured width and height, the sidebar at the page root's right edge
+- **THEN** each composes without error, its root at 0,0 with the app root's width less the sidebar and the app root's height, the sidebar at the page root's right edge, and the composite equal to the app root
 - **AND** returning to the application composes the slotted tree again
 - Check: `projects/synth/tests/runtime_main_component_tests.cpp`, TestEveryRuntimePageOpensBesideASlottedApp.
+
+#### Scenario: A runtime page beside an unslotted app keeps the configured size
+- **WHEN** a self-sized surface declares no slot and Audio is opened
+- **THEN** the page root is at 0,0 with the configured width and height and the sidebar at its right edge
+- Check: `projects/synth/tests/runtime_main_component_tests.cpp`, TestRuntimePageKeepsConfiguredBoundsBesideAnUnslottedApp.
 
 #### Scenario: A slot too small fails loudly
 - **WHEN** the declared slot is smaller than the sidebar root

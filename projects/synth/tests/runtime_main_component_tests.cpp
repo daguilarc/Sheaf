@@ -684,12 +684,11 @@ void TestSidebarLargerThanItsSlotFailsComposition()
             "the diagnostic names the slot node");
 }
 
-// While Audio, Controllers, Sync and File are open in turn, each composes
-// without throwing even though the app root beneath them is narrower than
-// their own configured size: the page keeps the content bounds it was
-// constructed with, and the sidebar sits at the page root's own right edge,
-// not at the narrow app root's. Returning to the application recomposes the
-// slotted tree.
+// While Audio, Controllers, Sync and File are open in turn beside a slotted
+// (narrow) app, each page takes the app root's width less the sidebar and the
+// app root's height, so page plus sidebar is exactly the 459x700 app root and
+// the shell scales both screens alike. Returning to the application
+// recomposes the slotted tree.
 void TestEveryRuntimePageOpensBesideASlottedApp()
 {
     SelfSizedApp app;
@@ -714,11 +713,13 @@ void TestEveryRuntimePageOpensBesideASlottedApp()
         Require(component.CurrentPage() != synth::runtime_ui::RuntimeMainPage::Application,
                 "the sidebar action opens a runtime page");
         const synth::ui::NodeTree tree = component.BuildTree();
-        RequireBounds(tree.nodes[1].bounds, 0.0f, 0.0f, 900.0f, 560.0f,
-                      "the page root keeps the configured content bounds, not the 459-wide app root");
+        RequireBounds(tree.nodes[1].bounds, 0.0f, 0.0f, 363.0f, 700.0f,
+                      "the page root is the app root's width less the sidebar, at its height");
         RequireBounds(FindNode(tree, synth::runtime_ui::NodeIds::kSidebarRoot).bounds,
-                      900.0f, 0.0f, 96.0f, 200.0f,
+                      363.0f, 0.0f, 96.0f, 200.0f,
                       "the sidebar sits at the page root's own right edge");
+        RequireBounds(FindNode(tree, "runtime.main.root").bounds, 0.0f, 0.0f, 459.0f, 700.0f,
+                      "page plus sidebar is exactly the app root");
         component.DispatchAction(synth::ui::Action::Named(backActions[index]));
         Require(component.CurrentPage() == synth::runtime_ui::RuntimeMainPage::Application,
                 "Back restores the application page");
@@ -729,6 +730,24 @@ void TestEveryRuntimePageOpensBesideASlottedApp()
                   0.0f, 0.0f, 459.0f, 700.0f, "the slotted composite returns");
     RequireBounds(FindNode(backToApp, synth::runtime_ui::NodeIds::kSidebarRoot).bounds,
                   363.0f, 500.0f, 96.0f, 200.0f, "the sidebar is back in its slot");
+}
+
+// A self-sized app that declares no slot is not laid out for a narrow window,
+// so a runtime page opened over it keeps the configured content bounds.
+void TestRuntimePageKeepsConfiguredBoundsBesideAnUnslottedApp()
+{
+    SelfSizedApp app;
+    app.surface.includeSlot = false;
+    FakeServices services;
+    synth::runtime_ui::RuntimeMainComponent<SelfSizedApp, FakeServices> component{app, services};
+
+    component.DispatchAction(synth::ui::Action::Named("runtime.sidebar.audio"));
+    const synth::ui::NodeTree tree = component.BuildTree();
+    RequireBounds(tree.nodes[1].bounds, 0.0f, 0.0f, 900.0f, 560.0f,
+                  "the page root keeps the configured content bounds");
+    RequireBounds(FindNode(tree, synth::runtime_ui::NodeIds::kSidebarRoot).bounds,
+                  900.0f, 0.0f, 96.0f, 200.0f,
+                  "the sidebar sits at the page root's own right edge");
 }
 
 // An extent-aware app surface resolves against whatever
@@ -1382,6 +1401,8 @@ int main()
     Run("TestSidebarLargerThanItsSlotFailsComposition",
         TestSidebarLargerThanItsSlotFailsComposition);
     Run("TestEveryRuntimePageOpensBesideASlottedApp", TestEveryRuntimePageOpensBesideASlottedApp);
+    Run("TestRuntimePageKeepsConfiguredBoundsBesideAnUnslottedApp",
+        TestRuntimePageKeepsConfiguredBoundsBesideAnUnslottedApp);
     Run("TestExtentAwareAppTracksResizedContentExtent", TestExtentAwareAppTracksResizedContentExtent);
     Run("TestSidebarOpensEachPageAndBackRestoresApp", TestSidebarOpensEachPageAndBackRestoresApp);
     Run("TestSidebarShowsOnlyTheDeclaredPages", TestSidebarShowsOnlyTheDeclaredPages);

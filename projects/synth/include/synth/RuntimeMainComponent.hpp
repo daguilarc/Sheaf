@@ -72,6 +72,8 @@ public:
         const RuntimeConfig config = App::Config();
         const ui::Bounds contentBounds{
             0.0f, 0.0f, static_cast<float>(config.uiWidth), static_cast<float>(config.uiHeight)};
+        configuredPageBounds_ = contentBounds;
+        pageBounds_ = contentBounds;
         audioSurface_.SetContentBounds(contentBounds);
         fileSurface_.SetContentBounds(contentBounds);
         controllersSurface_.SetContentBounds(contentBounds);
@@ -186,6 +188,23 @@ public:
         ui::NodeTree appTree = appSurface.BuildTree();
         const std::size_t appRootIndex = ValidateApplicationTree(appTree, expectedAppBounds);
         const ui::Bounds appRootBounds = appTree.nodes[appRootIndex].bounds;
+
+        // A self-sized surface that declares a sidebar slot is laid out for
+        // a narrow window (a phone). A runtime page shown in its place takes
+        // the app root's width less the sidebar, and its height, so page plus
+        // sidebar is exactly the app root and the shell scales both screens
+        // alike; at the configured size it would be shrunk to a fraction of
+        // the window width. Every other surface keeps the configured size.
+        if (!applicationShown)
+        {
+            const bool narrow = selfSizedApp != nullptr && selfSizedApp->SidebarSlot().has_value() &&
+                                appRootBounds.width > Layout::kSidebarWidth;
+            SetPageBounds(narrow ? ui::Bounds{0.0f,
+                                              0.0f,
+                                              appRootBounds.width - Layout::kSidebarWidth,
+                                              appRootBounds.height}
+                                 : configuredPageBounds_);
+        }
 
         ui::NodeTree contentTree = applicationShown
                                        ? MoveRootFirst(std::move(appTree), appRootIndex)
@@ -671,6 +690,23 @@ private:
         return rootIndex;
     }
 
+    void SetPageBounds(const ui::Bounds& bounds)
+    {
+        if (bounds == pageBounds_)
+        {
+            return;
+        }
+        pageBounds_ = bounds;
+        audioSurface_.SetContentBounds(bounds);
+        fileSurface_.SetContentBounds(bounds);
+        controllersSurface_.SetContentBounds(bounds);
+        syncSurface_.SetContentBounds(bounds);
+        if (hasRegisteredPage_)
+        {
+            appPageSurface_.SetContentBounds(bounds);
+        }
+    }
+
     ui::NodeTree BuildRuntimePageTree()
     {
         switch (currentPage_)
@@ -769,6 +805,10 @@ private:
     ActionHandler actionHandler_;
     ui::Bounds liveContentExtent_;
     ui::Bounds lastComposedBounds_;
+    // The runtime pages' content bounds: the configured size, or a narrow
+    // self-sized app's width less the sidebar (BuildTree()).
+    ui::Bounds configuredPageBounds_;
+    ui::Bounds pageBounds_;
 };
 
 }  // namespace synth::runtime_ui
