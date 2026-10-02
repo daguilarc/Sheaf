@@ -79,6 +79,10 @@
 #include "MidiConnectionManager.hpp"
 
 #include <juce_audio_devices/juce_audio_devices.h>
+#if JUCE_ANDROID
+#include <sched.h>
+#include <unistd.h>
+#endif
 #include <juce_gui_extra/juce_gui_extra.h>
 
 #include <algorithm>
@@ -89,6 +93,8 @@
 #include <functional>
 #include <memory>
 #include <optional>
+#include <utility>
+#include <vector>
 
 namespace synth_runtime {
 
@@ -548,11 +554,16 @@ private:
     // prefix are passed through at their own logical positions -- compacting
     // them would renumber every channel after the gap. Nothing here allocates,
     // logs, or renders text: the audio thread only stores the active count for
-    // the message thread's PublishPendingInputStatus() to render.
+    // the message thread's PublishPendingInputStatus() to render. The one
+    // exception is sar-44's single affinity syscall on an Android audio
+    // thread's first block (PlaceAudioThreadOnFastCores below).
     void audioDeviceIOCallbackWithContext(const float* const* inputChannelData, int numInputChannels,
                                           float* const* outputChannelData, int numOutputChannels, int numSamples,
                                           const juce::AudioIODeviceCallbackContext&) override {
         synth::ScopedThreadId tag(synth::ThreadId::Audio);
+#if JUCE_ANDROID
+        PlaceAudioThreadOnFastCores();
+#endif
         const int requestedInputChannels = requestedInputChannels_;
         const int activeInputChannels = std::clamp(numInputChannels, 0, requestedInputChannels);
         activeInputChannels_.store(activeInputChannels, std::memory_order_relaxed);
@@ -567,7 +578,75 @@ private:
         engine_.ProcessBlock(block, NowMicros());
     }
 
+#if JUCE_ANDROID
+    // sar-44. Android may run the real-time audio thread on a phone's slowest
+    // cores: on a Galaxy S20 FE it placed it on a 1.8 GHz Cortex-A55, where
+    // frogg3rs's engine used 98.5% of the core with the transport stopped
+    // (DSP pinned at 100%, playback slowing and skipping); on the 2.4 GHz
+    // Cortex-A77s the same build used 76.7% of one. The faster cores are every
+    // core whose maximum frequency is above the slowest readable core's; a
+    // core whose cpufreq file cannot be read (offline, or denied) is skipped,
+    // and with fewer than two distinct readable frequencies the mask is 0 and
+    // placement stays Android's. Message thread only: it reads files.
+    static std::uint64_t FastCoreMask() {
+        const long configured = sysconf(_SC_NPROCESSORS_CONF);
+        const int coreCount = static_cast<int>(std::clamp<long>(configured, 0, 64));
+        std::vector<std::pair<int, long>> readable;
+        for (int core = 0; core < coreCount; ++core) {
+            const juce::File file("/sys/devices/system/cpu/cpu" + juce::String(core) + "/cpufreq/cpuinfo_max_freq");
+            const long khz = file.loadFileAsString().trim().getLargeIntValue();
+            if (khz > 0) {
+                readable.emplace_back(core, khz);
+            }
+        }
+        if (readable.size() < 2) {
+            return 0;
+        }
+        const auto [minIt, maxIt] = std::minmax_element(
+            readable.begin(), readable.end(), [](const auto& a, const auto& b) { return a.second < b.second; });
+        if (minIt->second == maxIt->second) {
+            return 0;
+        }
+        std::uint64_t mask = 0;
+        for (const auto& [core, khz] : readable) {
+            if (khz > minIt->second) {
+                mask |= std::uint64_t{1} << core;
+            }
+        }
+        return mask;
+    }
+
+    // Audio thread: applies the mask audioDeviceAboutToStart() computed, once
+    // per audio thread (Oboe makes a new thread when it reopens a stream) and
+    // again only if the mask changes. The attempt is recorded even if the
+    // syscall fails, so a refused placement is never retried here. One mask
+    // per process is assumed: the record is per thread, not per Runtime.
+    void PlaceAudioThreadOnFastCores() {
+        static thread_local std::uint64_t appliedMask = 0;
+        const std::uint64_t mask = fastCoreMask_.load(std::memory_order_relaxed);
+        if (mask == 0 || mask == appliedMask) {
+            return;
+        }
+        appliedMask = mask;
+        cpu_set_t cores;
+        CPU_ZERO(&cores);
+        for (int core = 0; core < 64; ++core) {
+            if ((mask >> core) & 1u) {
+                CPU_SET(core, &cores);
+            }
+        }
+        sched_setaffinity(0, sizeof(cores), &cores);
+    }
+
+    std::atomic<std::uint64_t> fastCoreMask_{0};
+#endif
+
     void audioDeviceAboutToStart(juce::AudioIODevice* device) override {
+#if JUCE_ANDROID
+        // sar-44: decided here, on the message thread, so the audio callback
+        // never touches a file. Re-read on every device start.
+        fastCoreMask_.store(FastCoreMask(), std::memory_order_relaxed);
+#endif
         if (device != nullptr) {
             double sampleRate = device->getCurrentSampleRate();
             int blockSize = device->getCurrentBufferSizeSamples();
