@@ -3577,6 +3577,215 @@ TEST_CASE(group_process_sample_phases_visit_only_registered_roots) {
     REQUIRE_TRUE(work.topLevelProcessLiteCalls == 2);
 }
 
+namespace quiescence {
+
+// One group of seven parameters, optionally with spm-96's quiescent skip, so a
+// test can run the same sequence through both and compare them bit for bit.
+struct Rig {
+    synth::ParameterManager manager;
+    synth::ParameterGroup* group = nullptr;
+    std::vector<synth::Parameter*> parameters;
+    float sourceA = 0.3f;
+    float sourceB = 0.7f;
+
+    explicit Rig(bool skip) {
+        REQUIRE_TRUE(manager.SetGestureCount(1));
+        group = &manager.CreateGroup({
+            .numVoices = 1,
+            .numModulators = 2,
+            .numScenes = 2,
+            .maxParameters = 32,
+            .targetComputeIntervalSamples = 16,
+            .skipQuiescentParameters = skip,
+        });
+        std::array<float*, 1> a{&sourceA};
+        std::array<float*, 1> b{&sourceB};
+        group->SetModulationSource(0, a, {.connected = true});
+        group->SetModulationSource(1, b, {.connected = true});
+        const float defaults[] = {0.2f, 0.35f, 0.5f, 0.65f, 0.8f, 0.1f, 0.9f};
+        for (std::size_t ix = 0; ix < 7; ++ix) {
+            parameters.push_back(&manager.CreateParameter(
+                *group, {.name = "P" + std::to_string(ix), .defaultValue = defaults[ix]}));
+        }
+        REQUIRE_TRUE(manager.SetSceneEndpoints(0, 0));
+    }
+
+    // One sample the way an application drives it: phase 1, an application
+    // overwrite of parameter 0's cached knob (frogg3rs's fuego stage), phase 2.
+    // The overwrite moves for a while, then holds.
+    void Sample(std::uint64_t sampleIndex) {
+        sourceA = 0.3f + 0.2f * std::sin(static_cast<float>(sampleIndex) * 0.01f);
+        group->ProcessSamplePhase1(sampleIndex);
+        synth::Parameter& fuegoed = *parameters[0];
+        const float raw = fuegoed.CachedKnobValue(0);
+        const float shaped = sampleIndex < 3000 ? raw * 0.5f + 0.001f * static_cast<float>(sampleIndex % 7) : raw * 0.5f;
+        fuegoed.ReplaceCachedKnobValue(0, shaped);
+        group->ProcessSamplePhase2();
+    }
+
+    void Event(std::uint64_t sampleIndex) {
+        switch (sampleIndex) {
+            case 2000:  // scene blend move
+                REQUIRE_TRUE(manager.SetSceneEndpoints(0, 1));
+                parameters[1]->SceneCenter(1) = 0.95f;
+                manager.SetSceneBlend(0.4f);
+                break;
+            case 4000:  // knob edit
+                parameters[2]->SceneCenter(0) = 0.15f;
+                parameters[2]->SceneCenter(1) = 0.15f;
+                break;
+            case 6000:  // a route added
+                parameters[3]->EnsureModulationDepth(0)->SceneCenter(0) = 0.9f;
+                parameters[3]->EnsureModulationDepth(0)->SceneCenter(1) = 0.9f;
+                break;
+            case 9000:  // the route returned to neutral; Compute prunes it
+                parameters[3]->EnsureModulationDepth(0)->SceneCenter(0) = 0.5f;  // the neutral depth centre (src kNeutralModulationDepthCenter)
+                parameters[3]->EnsureModulationDepth(0)->SceneCenter(1) = 0.5f;  // the neutral depth centre (src kNeutralModulationDepthCenter)
+                break;
+            case 11000:  // a top-level parameter assigned as another's depth
+                REQUIRE_TRUE(parameters[5]->AssignModulationDepth(1, parameters[6]));
+                parameters[6]->SceneCenter(0) = 0.85f;
+                parameters[6]->SceneCenter(1) = 0.85f;
+                break;
+            case 13000:  // a revert to default
+                parameters[1]->RevertToDefault(manager.Scene());
+                break;
+            case 15000:  // a revert of every value
+                parameters[2]->RevertAllToDefault();
+                break;
+            case 17000: {  // a JSON save and load
+                synth::JsonArena arena(1 << 16);
+                const synth::JSON saved = manager.ParameterValuesToJSON(arena);
+                parameters[4]->SceneCenter(0) = 0.05f;
+                REQUIRE_TRUE(manager.LoadParameterValuesFromJSON(saved));
+                break;
+            }
+            case 19000:  // a compute-and-snap of every parameter
+                parameters[4]->SceneCenter(0) = 0.6f;
+                manager.ComputeAllParameters();
+                break;
+            case 21000:  // new processing timing
+                group->ConfigureProcessingTiming({
+                    .processLiteAlpha = 0.05f,
+                    .targetComputeIntervalSamples = 16,
+                    .uiDisplayCenterAlpha = 0.002f,
+                    .uiDisplaySpreadAlpha = 0.003f,
+                });
+                break;
+            default:
+                break;
+        }
+    }
+};
+
+std::uint32_t Bits(float value) { return std::bit_cast<std::uint32_t>(value); }
+
+bool SameState(const synth::Parameter& a, const synth::Parameter& b) {
+    return Bits(a.CachedKnobValue(0)) == Bits(b.CachedKnobValue(0)) && Bits(a.GetRaw(0)) == Bits(b.GetRaw(0)) &&
+           Bits(a.CurrentCenter()) == Bits(b.CurrentCenter()) &&
+           Bits(a.CurrentCenterScale(0)) == Bits(b.CurrentCenterScale(0)) &&
+           Bits(a.CurrentNormalizationOffset(0)) == Bits(b.CurrentNormalizationOffset(0)) &&
+           Bits(a.UIDisplayCenter(0)) == Bits(b.UIDisplayCenter(0)) &&
+           Bits(a.UIDisplaySpread(0)) == Bits(b.UIDisplaySpread(0));
+}
+
+}  // namespace quiescence
+
+// spm-96: the skipped and unskipped groups agree bit for bit at every sample
+// through every writer of a value the lite steps read.
+TEST_CASE(quiescent_skip_matches_unskipped_processing) {
+    quiescence::Rig skipped(true);
+    quiescence::Rig unskipped(false);
+    synth::ParameterProcessingObserver work{};
+    skipped.group->SetProcessingObserverForTests(&work);
+    for (std::uint64_t sampleIndex = 0; sampleIndex < 26000; ++sampleIndex) {
+        skipped.Event(sampleIndex);
+        unskipped.Event(sampleIndex);
+        skipped.Sample(sampleIndex);
+        unskipped.Sample(sampleIndex);
+        for (std::size_t ix = 0; ix < skipped.parameters.size(); ++ix) {
+            if (!quiescence::SameState(*skipped.parameters[ix], *unskipped.parameters[ix])) {
+                std::cerr << "diverged at sample " << sampleIndex << ", parameter " << ix << "\n";
+                REQUIRE_TRUE(false);
+            }
+        }
+    }
+    // Positive control: the skip actually happened, so agreement means something.
+    REQUIRE_TRUE(work.topLevelQuiescentSkips > 26000);
+}
+
+// spm-96: once settled with no route, a parameter's phase-1 visits are skipped
+// except one per compute interval, and a wake brings back the full step.
+TEST_CASE(quiescent_parameters_skip_their_lite_step_until_woken) {
+    quiescence::Rig rig(true);
+    for (std::uint64_t sampleIndex = 0; sampleIndex < 48000; ++sampleIndex) {
+        rig.group->ProcessSample(sampleIndex);
+    }
+    synth::ParameterProcessingObserver work{};
+    rig.group->SetProcessingObserverForTests(&work);
+    for (std::uint64_t sampleIndex = 48000; sampleIndex < 48160; ++sampleIndex) {
+        rig.group->ProcessSample(sampleIndex);
+    }
+    const std::size_t visits = 7 * 160;
+    REQUIRE_TRUE(work.topLevelProcessLiteCalls == visits);
+    REQUIRE_TRUE(work.topLevelQuiescentSkips == visits - 7 * 10);  // one compute sample in 16
+
+    rig.parameters[2]->RevertAllToDefault();  // a writer wakes it
+    synth::ParameterProcessingObserver afterWake{};
+    rig.group->SetProcessingObserverForTests(&afterWake);
+    rig.group->ProcessSample(48161);
+    REQUIRE_TRUE(afterWake.topLevelQuiescentSkips == 6);
+}
+
+// spm-96: every writer of a value the lite steps read wakes the parameter it
+// writes, so its next visit runs in full. Checked on a non-compute sample,
+// where only a wake can stop the skip.
+TEST_CASE(every_lite_input_writer_wakes_the_parameter) {
+    struct Writer {
+        const char* name;
+        std::size_t expectedSkips;  // of 7 visits on the next sample
+        std::function<void(quiescence::Rig&)> write;
+    };
+    const Writer writers[] = {
+        {"RevertToDefault", 6, [](quiescence::Rig& rig) { rig.parameters[2]->RevertToDefault(rig.manager.Scene()); }},
+        {"RevertAllToDefault", 6, [](quiescence::Rig& rig) { rig.parameters[2]->RevertAllToDefault(); }},
+        {"Compute", 6, [](quiescence::Rig& rig) { rig.parameters[2]->Compute(rig.manager.Scene()); }},
+        {"ComputeAllParameters", 0, [](quiescence::Rig& rig) { rig.manager.ComputeAllParameters(); }},
+        {"ConfigureProcessingTiming", 0, [](quiescence::Rig& rig) {
+             rig.group->ConfigureProcessingTiming({
+                 .processLiteAlpha = 0.05f,
+                 .targetComputeIntervalSamples = 16,
+                 .uiDisplayCenterAlpha = 0.002f,
+                 .uiDisplaySpreadAlpha = 0.003f,
+             });
+         }},
+        {"CurrentDepthSlots", 6, [](quiescence::Rig& rig) { (void)rig.parameters[2]->CurrentDepthSlots(0); }},
+        {"TargetDepthSlots", 6, [](quiescence::Rig& rig) { (void)rig.parameters[2]->TargetDepthSlots(0); }},
+        // Assigning a depth writes nothing the lite steps read: the route
+        // becomes active, and the depth is snapped, in the next Compute(),
+        // which wakes both. Until then the unskipped path does nothing either.
+        {"AssignModulationDepth", 7, [](quiescence::Rig& rig) {
+             REQUIRE_TRUE(rig.parameters[2]->AssignModulationDepth(1, rig.parameters[3]));
+         }},
+    };
+    for (const Writer& writer : writers) {
+        quiescence::Rig rig(true);
+        std::uint64_t sampleIndex = 0;
+        for (; sampleIndex < 48000; ++sampleIndex) {
+            rig.group->ProcessSample(sampleIndex);
+        }
+        writer.write(rig);
+        synth::ParameterProcessingObserver work{};
+        rig.group->SetProcessingObserverForTests(&work);
+        rig.group->ProcessSample(sampleIndex + 1);  // 48001: not a compute sample
+        if (work.topLevelQuiescentSkips != writer.expectedSkips) {
+            std::cerr << writer.name << ": " << work.topLevelQuiescentSkips << " skips, expected "
+                      << writer.expectedSkips << "\n";
+            REQUIRE_TRUE(false);
+        }
+    }
+}
+
 TEST_CASE(recursive_local_compute_seeds_display_without_audio_rate_processing) {
     synth::ParameterManager manager;
     auto& group = manager.CreateGroup({

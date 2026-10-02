@@ -210,6 +210,8 @@ struct ParameterProcessingObserver {
     std::size_t activeRouteVisits = 0;
     std::size_t activeGestureVisits = 0;
     std::size_t neutralCollectionPasses = 0;
+    // spm-96: phase-1 visits the group skipped because the parameter was quiescent.
+    std::size_t topLevelQuiescentSkips = 0;
 };
 
 enum class ModulationBlendMode {
@@ -228,6 +230,10 @@ struct ParameterGroupConfig {
     float uiDisplayCenterAlpha = kDefaultUiDisplayCenterAlpha;
     float uiDisplaySpreadAlpha = kDefaultUiDisplaySpreadAlpha;
     ModulationBlendMode modulationBlendMode = ModulationBlendMode::kCrossfade;
+    // spm-96: skip a quiescent top-level parameter's per-sample lite steps in
+    // ParameterGroup::ProcessSamplePhase1/2. Results are bit-identical either
+    // way; false runs every lite step, for tests that compare the two.
+    bool skipQuiescentParameters = true;
 
     bool IsValid() const;
 };
@@ -261,6 +267,8 @@ struct ParameterStorageBatch {
     std::vector<float> currentKnobValueArena;
     std::vector<float> uiDisplayCenterArena;
     std::vector<float> uiDisplaySpreadEnergyArena;
+    std::vector<float> lastRawValueArena;
+    std::vector<float> settledPhase2KnobArena;
     std::vector<Parameter*> modulationDepthArena;
     std::vector<float> sceneCenterArena;
     std::vector<float> gestureValueArena;
@@ -465,6 +473,8 @@ private:
     std::vector<float> currentKnobValueArena_;
     std::vector<float> uiDisplayCenterArena_;
     std::vector<float> uiDisplaySpreadEnergyArena_;
+    std::vector<float> lastRawValueArena_;
+    std::vector<float> settledPhase2KnobArena_;
     std::vector<Parameter*> modulationDepthArena_;
     std::vector<float> sceneCenterArena_;
     std::vector<float> gestureValueArena_;
@@ -565,6 +575,25 @@ public:
     bool GestureActive(std::size_t sceneIx, std::size_t gestureIx) const;
     GestureMask GesturesAffectingMask() const;
 
+    // spm-96: clears quiescence, so the group runs this parameter's next lite
+    // steps in full. Called by every function that writes a value the lite
+    // steps read.
+    void Wake() {
+        phase1Quiescent_ = false;
+        phase2Settled_ = false;
+    }
+    bool Phase1Quiescent() const { return phase1Quiescent_; }
+    // spm-96: the skipped phase 1 of a quiescent parameter: the cached knob
+    // values return to the raw values its last phase 1 computed, which an
+    // application may have overwritten after phase 1 (ReplaceCachedKnobValue).
+    void RestoreLastRawKnobValues() {
+        for (std::size_t voiceIx = 0; voiceIx < currentKnobValues_.size(); ++voiceIx) {
+            currentKnobValues_[voiceIx] = lastRawValues_[voiceIx];
+        }
+    }
+    // spm-96: phase 2 would change nothing: it last changed nothing, and the
+    // knob values it would read are bitwise the ones it read then.
+    bool Phase2WouldChangeNothing() const;
     std::span<float> CurrentDepthSlots(std::size_t voiceIx);
     std::span<const float> CurrentDepthSlots(std::size_t voiceIx) const;
     std::span<float> TargetDepthSlots(std::size_t voiceIx);
@@ -654,6 +683,15 @@ private:
     std::span<float> currentKnobValues_;
     std::span<float> uiDisplayCenters_;
     std::span<float> uiDisplaySpreadEnergies_;
+    // spm-96. lastRawValues_: each voice's GetRaw() from the last lite phase 1
+    // that ran. settledPhase2Knobs_: the cached knob values the last lite
+    // phase 2 read when it changed nothing.
+    std::span<float> lastRawValues_;
+    std::span<float> settledPhase2Knobs_;
+    // True after a lite phase 1 that changed nothing with no route active;
+    // true after a lite phase 2 that changed nothing. Cleared by Wake().
+    bool phase1Quiescent_ = false;
+    bool phase2Settled_ = false;
     std::span<Parameter*> modulationDepths_;
     std::span<float> sceneCenters_;
     std::span<float> gestureValues_;

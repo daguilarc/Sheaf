@@ -528,6 +528,8 @@ ParameterStorageBatch::ParameterStorageBatch(const ParameterGroupConfig& config,
       currentKnobValueArena(capacity * config.numVoices),
       uiDisplayCenterArena(capacity * config.numVoices),
       uiDisplaySpreadEnergyArena(capacity * config.numVoices),
+      lastRawValueArena(capacity * config.numVoices),
+      settledPhase2KnobArena(capacity * config.numVoices),
       modulationDepthArena(capacity * config.numModulators, nullptr),
       sceneCenterArena(capacity * config.numScenes),
       gestureValueArena(capacity * config.numScenes * gestureCount),
@@ -729,6 +731,8 @@ ParameterGroup::ParameterGroup(ParameterGroupConfig config, ParameterManager& ma
     currentKnobValueArena_.resize(config_.maxParameters * config_.numVoices);
     uiDisplayCenterArena_.resize(config_.maxParameters * config_.numVoices);
     uiDisplaySpreadEnergyArena_.resize(config_.maxParameters * config_.numVoices);
+    lastRawValueArena_.resize(config_.maxParameters * config_.numVoices);
+    settledPhase2KnobArena_.resize(config_.maxParameters * config_.numVoices);
     modulationDepthArena_.resize(config_.maxParameters * config_.numModulators, nullptr);
     sceneCenterArena_.resize(config_.maxParameters * config_.numScenes);
     gestureValueArena_.resize(config_.maxParameters * config_.numScenes * gestureCount_);
@@ -923,11 +927,24 @@ void ParameterGroup::ConfigureProcessingTiming(const ParameterProcessingTiming& 
     config_.targetComputeIntervalSamples = timing.targetComputeIntervalSamples;
     config_.uiDisplayCenterAlpha = timing.uiDisplayCenterAlpha;
     config_.uiDisplaySpreadAlpha = timing.uiDisplaySpreadAlpha;
+    for (Parameter* parameter : topLevelParameters_) {
+        parameter->Wake();  // spm-96: new alphas change what a lite step does.
+    }
 }
 
 void ParameterGroup::ProcessSamplePhase1(std::uint64_t sampleIndex) {
+    // spm-96: a quiescent parameter skips its lite phase 1, except on a
+    // compute sample (Compute() wakes it and the full step runs).
+    const bool computeSample = sampleIndex % config_.targetComputeIntervalSamples == 0;
     for (Parameter* parameter : topLevelParameters_) {
-        parameter->ProcessSamplePhase1(sampleIndex);
+        if (config_.skipQuiescentParameters && !computeSample && parameter->Phase1Quiescent()) {
+            parameter->RestoreLastRawKnobValues();
+            if (processingObserver_ != nullptr) {
+                ++processingObserver_->topLevelQuiescentSkips;
+            }
+        } else {
+            parameter->ProcessSamplePhase1(sampleIndex);
+        }
         if (processingObserver_ != nullptr) {
             ++processingObserver_->topLevelProcessLiteCalls;
         }
@@ -935,7 +952,12 @@ void ParameterGroup::ProcessSamplePhase1(std::uint64_t sampleIndex) {
 }
 
 void ParameterGroup::ProcessSamplePhase2() {
+    // spm-96: decided here, after phase 1 and any application overwrite, so a
+    // parameter woken during this sample's phase 1 still runs its phase 2.
     for (Parameter* parameter : topLevelParameters_) {
+        if (config_.skipQuiescentParameters && parameter->Phase2WouldChangeNothing()) {
+            continue;
+        }
         parameter->ProcessSamplePhase2();
     }
 }
@@ -994,6 +1016,10 @@ Parameter::Parameter(ParameterId id, ParameterGroup& group, ParameterConfig conf
       uiDisplaySpreadEnergies_(ArenaSlice(group_.uiDisplaySpreadEnergyArena_,
                                           slotIx_ * group_.Config().numVoices,
                                           group_.Config().numVoices)),
+      lastRawValues_(ArenaSlice(group_.lastRawValueArena_, slotIx_ * group_.Config().numVoices,
+                                group_.Config().numVoices)),
+      settledPhase2Knobs_(ArenaSlice(group_.settledPhase2KnobArena_, slotIx_ * group_.Config().numVoices,
+                                     group_.Config().numVoices)),
       modulationDepths_(ArenaSlice(group_.modulationDepthArena_, slotIx_ * group_.Config().numModulators,
                                    group_.Config().numModulators)),
       sceneCenters_(ArenaSlice(group_.sceneCenterArena_, slotIx_ * group_.Config().numScenes,
@@ -1076,6 +1102,10 @@ Parameter::Parameter(ParameterId id, ParameterGroup& group, ParameterConfig conf
       uiDisplaySpreadEnergies_(ArenaSlice(storageBatch.uiDisplaySpreadEnergyArena,
                                           slotIx_ * group_.Config().numVoices,
                                           group_.Config().numVoices)),
+      lastRawValues_(ArenaSlice(storageBatch.lastRawValueArena, slotIx_ * group_.Config().numVoices,
+                                group_.Config().numVoices)),
+      settledPhase2Knobs_(ArenaSlice(storageBatch.settledPhase2KnobArena, slotIx_ * group_.Config().numVoices,
+                                     group_.Config().numVoices)),
       modulationDepths_(ArenaSlice(storageBatch.modulationDepthArena, slotIx_ * group_.Config().numModulators,
                                    group_.Config().numModulators)),
       sceneCenters_(ArenaSlice(storageBatch.sceneCenterArena, slotIx_ * group_.Config().numScenes,
@@ -1167,6 +1197,7 @@ std::size_t Parameter::CollectNeutralChildren() {
 }
 
 void Parameter::ResetLocalForReuse(ParameterId id, ParameterConfig config) {
+    Wake();  // spm-96
     if (id != kLocalParameterId) {
         throw std::logic_error("recycled parameter slots are local-only");
     }
@@ -1498,16 +1529,31 @@ bool Parameter::LoadValuesFromJSON(JSON json) {
     return true;
 }
 
+namespace {
+
+// spm-96: one smoothing step, `value += alpha * (target - value)`, reporting
+// whether it changed the value's bits.
+bool SmoothAndReportChange(float& value, float target, float alpha) {
+    const float before = value;
+    value += alpha * (target - value);
+    return std::bit_cast<std::uint32_t>(value) != std::bit_cast<std::uint32_t>(before);
+}
+
+bool SameBits(float a, float b) {
+    return std::bit_cast<std::uint32_t>(a) == std::bit_cast<std::uint32_t>(b);
+}
+
+}  // namespace
+
 void Parameter::ProcessLitePhase1() {
     const float alpha = group_.Config().processLiteAlpha;
-    currentCenter_ += alpha * (targetCenter_ - currentCenter_);
+    bool changed = SmoothAndReportChange(currentCenter_, targetCenter_, alpha);
     for (std::size_t voiceIx = 0; voiceIx < currentCenterScales_.size(); ++voiceIx) {
-        currentCenterScales_[voiceIx] +=
-            alpha * (targetCenterScales_[voiceIx] - currentCenterScales_[voiceIx]);
-        currentNormalizationOffsets_[voiceIx] +=
-            alpha * (targetNormalizationOffsets_[voiceIx] - currentNormalizationOffsets_[voiceIx]);
-        currentMinValues_[voiceIx] += alpha * (targetMinValues_[voiceIx] - currentMinValues_[voiceIx]);
-        currentMaxValues_[voiceIx] += alpha * (targetMaxValues_[voiceIx] - currentMaxValues_[voiceIx]);
+        changed |= SmoothAndReportChange(currentCenterScales_[voiceIx], targetCenterScales_[voiceIx], alpha);
+        changed |= SmoothAndReportChange(currentNormalizationOffsets_[voiceIx], targetNormalizationOffsets_[voiceIx],
+                                         alpha);
+        changed |= SmoothAndReportChange(currentMinValues_[voiceIx], targetMinValues_[voiceIx], alpha);
+        changed |= SmoothAndReportChange(currentMaxValues_[voiceIx], targetMaxValues_[voiceIx], alpha);
     }
     for (std::size_t voiceIx = 0; voiceIx < group_.Config().numVoices; ++voiceIx) {
         for (std::size_t routeSlot = 0; routeSlot < activeRouteCount_; ++routeSlot) {
@@ -1520,7 +1566,10 @@ void Parameter::ProcessLitePhase1() {
     }
     for (std::size_t voiceIx = 0; voiceIx < currentKnobValues_.size(); ++voiceIx) {
         currentKnobValues_[voiceIx] = GetRaw(voiceIx);
+        lastRawValues_[voiceIx] = currentKnobValues_[voiceIx];
     }
+    // spm-96: with no route, the next step reads exactly what this one did.
+    phase1Quiescent_ = !changed && activeRouteCount_ == 0;
 }
 
 void Parameter::ReplaceCachedKnobValue(std::size_t voiceIx, float normalizedValue) {
@@ -1531,13 +1580,37 @@ void Parameter::ReplaceCachedKnobValue(std::size_t voiceIx, float normalizedValu
 }
 
 void Parameter::ProcessLitePhase2() {
+    bool changed = false;
     for (std::size_t voiceIx = 0; voiceIx < currentKnobValues_.size(); ++voiceIx) {
         const float knob = currentKnobValues_[voiceIx];
+        const float centerBefore = uiDisplayCenters_[voiceIx];
+        const float energyBefore = uiDisplaySpreadEnergies_[voiceIx];
         uiDisplayCenters_[voiceIx] += group_.Config().uiDisplayCenterAlpha * (knob - uiDisplayCenters_[voiceIx]);
         const float residual = knob - uiDisplayCenters_[voiceIx];
         uiDisplaySpreadEnergies_[voiceIx] +=
             group_.Config().uiDisplaySpreadAlpha * ((residual * residual) - uiDisplaySpreadEnergies_[voiceIx]);
+        changed = changed || !SameBits(uiDisplayCenters_[voiceIx], centerBefore) ||
+                  !SameBits(uiDisplaySpreadEnergies_[voiceIx], energyBefore);
     }
+    // spm-96: settled when nothing changed; remember the knobs it read.
+    phase2Settled_ = !changed;
+    if (phase2Settled_) {
+        for (std::size_t voiceIx = 0; voiceIx < currentKnobValues_.size(); ++voiceIx) {
+            settledPhase2Knobs_[voiceIx] = currentKnobValues_[voiceIx];
+        }
+    }
+}
+
+bool Parameter::Phase2WouldChangeNothing() const {
+    if (!phase2Settled_) {
+        return false;
+    }
+    for (std::size_t voiceIx = 0; voiceIx < currentKnobValues_.size(); ++voiceIx) {
+        if (!SameBits(currentKnobValues_[voiceIx], settledPhase2Knobs_[voiceIx])) {
+            return false;
+        }
+    }
+    return true;
 }
 
 void Parameter::ProcessLite() {
@@ -1812,6 +1885,7 @@ void Parameter::RandomizeVisibleValue(const SceneState& scene, float normalized)
 }
 
 void Parameter::RevertToDefault(const SceneState& scene) {
+    Wake();  // spm-96
     ValidateSceneEndpoints(scene);
     for (Parameter* depthParameter : modulationDepths_) {
         if (depthParameter != nullptr) {
@@ -1849,6 +1923,7 @@ void Parameter::RevertToDefault(const SceneState& scene) {
 }
 
 void Parameter::RevertAllToDefault() {
+    Wake();  // spm-96
     for (Parameter* depthParameter : modulationDepths_) {
         if (depthParameter != nullptr) {
             depthParameter->RevertAllToDefault();
@@ -1995,6 +2070,7 @@ bool Parameter::GestureActive(std::size_t sceneIx, std::size_t gestureIx) const 
 }
 
 std::span<float> Parameter::CurrentDepthSlots(std::size_t voiceIx) {
+    Wake();  // spm-96
     if (voiceIx >= group_.Config().numVoices) {
         throw std::out_of_range("parameter voice index out of range");
     }
@@ -2017,6 +2093,7 @@ std::span<const float> Parameter::CurrentDepthSlots(std::size_t voiceIx) const {
 }
 
 std::span<float> Parameter::TargetDepthSlots(std::size_t voiceIx) {
+    Wake();  // spm-96
     if (voiceIx >= group_.Config().numVoices) {
         throw std::out_of_range("parameter voice index out of range");
     }
@@ -2109,6 +2186,7 @@ void Parameter::AssertRouteBijection() const {
 }
 
 void Parameter::EnsureRouteActive(std::size_t sourceIx) {
+    Wake();  // spm-96
     if (sourceIx >= sourceRoutePositions_.size()) {
         throw std::out_of_range("parameter modulator index out of range");
     }
@@ -2135,6 +2213,7 @@ void Parameter::EnsureRouteActive(std::size_t sourceIx) {
 }
 
 void Parameter::RemoveActiveRoute(std::size_t routeSlot) {
+    Wake();  // spm-96
     if (routeSlot >= activeRouteCount_) {
         throw std::out_of_range("active parameter route slot out of range");
     }
@@ -2167,6 +2246,7 @@ bool Parameter::RouteNeutralAcrossVoices(std::size_t routeSlot) const {
 }
 
 void Parameter::PruneNeutralActiveRoutes() {
+    Wake();  // spm-96
     for (std::size_t routeSlot = activeRouteCount_; routeSlot-- > 0;) {
         if (!RouteNeutralAcrossVoices(routeSlot)) {
             continue;
@@ -2220,6 +2300,7 @@ void Parameter::EnforceOneWayAmountFloor(std::size_t sceneIx) {
 }
 
 void Parameter::ResetModulationDepthToNeutral(const SceneState& scene) {
+    Wake();  // spm-96
     ValidateSceneEndpoints(scene);
     for (Parameter* depthParameter : modulationDepths_) {
         if (depthParameter != nullptr) {
@@ -2289,6 +2370,7 @@ float Parameter::ComputeRawCenter(const SceneState& scene) const {
 }
 
 void Parameter::ComputeAtDepth(const SceneState& scene, std::size_t recursionDepth, bool smoothTargetCenter) {
+    Wake();  // spm-96
     recursionDepth_ = recursionDepth;
     if (recursionDepth > 0 && group_.processingObserver_ != nullptr) {
         ++group_.processingObserver_->localRecursiveComputeCalls;
@@ -2442,6 +2524,7 @@ void Parameter::ComputeAtDepth(const SceneState& scene, std::size_t recursionDep
 }
 
 void Parameter::SnapCurrentToTarget() {
+    Wake();  // spm-96
     currentCenter_ = targetCenter_;
     std::copy(targetCenterScales_.begin(), targetCenterScales_.end(), currentCenterScales_.begin());
     std::copy(targetNormalizationOffsets_.begin(), targetNormalizationOffsets_.end(), currentNormalizationOffsets_.begin());
@@ -2458,6 +2541,7 @@ void Parameter::SnapCurrentToTarget() {
 }
 
 void Parameter::SeedCachedKnobAndUiDisplayState() {
+    Wake();  // spm-96
     for (std::size_t voiceIx = 0; voiceIx < currentKnobValues_.size(); ++voiceIx) {
         currentKnobValues_[voiceIx] = GetRaw(voiceIx);
         uiDisplayCenters_[voiceIx] = currentKnobValues_[voiceIx];
